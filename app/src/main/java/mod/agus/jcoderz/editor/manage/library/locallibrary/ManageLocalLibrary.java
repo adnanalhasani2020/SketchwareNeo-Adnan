@@ -67,11 +67,22 @@ public class ManageLocalLibrary {
             Object dexPath = localLibrary.get("dexPath");
             if (dexPath instanceof String) {
                 dexes.add((String) dexPath);
-            } else {
+            } else if (!(localLibrary.get("jarPath") instanceof String)) {
                 SketchwareUtil.toastError("Invalid DEX path of enabled Local library #" + i, Toast.LENGTH_LONG);
             }
         }
         return dexes;
+    }
+
+    public ArrayList<String> getJarOnlyLibraryJars() {
+        ArrayList<String> jars = new ArrayList<>();
+        for (HashMap<String, Object> localLibrary : list) {
+            Object jarPath = localLibrary.get("jarPath");
+            if (jarPath instanceof String && !(localLibrary.get("dexPath") instanceof String)) {
+                jars.add((String) jarPath);
+            }
+        }
+        return jars;
     }
 
     public ArrayList<String> getExtraDexes() {
@@ -150,9 +161,10 @@ public class ManageLocalLibrary {
 
     public ArrayList<String> getNativeLibs() {
         ArrayList<String> nativeLibraryDirectories = new ArrayList<>();
-        for (String localLibraryDexPath : getDexLocalLibrary()) {
-            File localLibraryDexFile = new File(localLibraryDexPath);
-            File jniFolder = new File(localLibraryDexFile.getParentFile(), "jni");
+        for (HashMap<String, Object> localLibrary : list) {
+            Object anchor = localLibrary.get("dexPath") instanceof String ? localLibrary.get("dexPath") : localLibrary.get("jarPath");
+            if (!(anchor instanceof String)) continue;
+            File jniFolder = new File(new File((String) anchor).getParentFile(), "jni");
             if (jniFolder.isDirectory()) {
                 nativeLibraryDirectories.add(jniFolder.getAbsolutePath());
             }

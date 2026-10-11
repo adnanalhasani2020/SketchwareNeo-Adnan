@@ -125,6 +125,16 @@ public final class HttpFetcher {
         }
     }
 
+    public static int statusOf(@NonNull String url) {
+        try {
+            OpenResult opened = open(url);
+            opened.connection.disconnect();
+            return opened.code;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     @NonNull
     public static Response getWithRetry(@NonNull String url, int maxBodyBytes, int attempts, @Nullable BooleanSupplier cancelled) {
         Response last = null;

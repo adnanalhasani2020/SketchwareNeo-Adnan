@@ -11,6 +11,8 @@ public final class ResolverFailure {
         NETWORK("Network error"),
         POM("POM error"),
         PACKAGING("Unsupported packaging"),
+        METADATA("Metadata error"),
+        VARIANT("No usable variant"),
         DOWNLOAD("Download failed"),
         UNZIP("Extraction failed"),
         MISSING_CLASSES("Missing classes.jar"),

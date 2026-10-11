@@ -37,11 +37,13 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
     private static final int TERMINAL_CURSOR = Color.parseColor("#4CAF50"); // green cursor, matches the prompt accent
 
     private final WeakReference<TerminalView> terminalViewRef;
+    private final WeakReference<NeoTerminalView> terminalOwnerRef;
     private boolean ctrlDown = false;
     private boolean altDown = false;
 
-    public NeoTerminalSessionClient(TerminalView terminalView) {
+    public NeoTerminalSessionClient(TerminalView terminalView, NeoTerminalView owner) {
         this.terminalViewRef = new WeakReference<>(terminalView);
+        this.terminalOwnerRef = new WeakReference<>(owner);
     }
 
     private TerminalView view() {
@@ -70,6 +72,8 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
     public void onSessionFinished(TerminalSession finishedSession) {
         TerminalView v = view();
         if (v != null && v.getCurrentSession() == finishedSession) v.onScreenUpdated();
+        NeoTerminalView owner = terminalOwnerRef.get();
+        if (owner != null) owner.onSessionFinished(finishedSession);
     }
 
     @Override
@@ -89,12 +93,11 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
         if (v == null) return;
         android.content.ClipboardManager clipboard =
                 (android.content.ClipboardManager) v.getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
-        if (clipboard != null && clipboard.hasPrimaryClip() && clipboard.getPrimaryClip().getItemCount() > 0) {
-            CharSequence paste = clipboard.getPrimaryClip().getItemAt(0).coerceToText(v.getContext());
-            if (paste != null && session != null) {
-                session.write(paste.toString());
-            }
-        }
+        if (clipboard == null || !clipboard.hasPrimaryClip()) return;
+        android.content.ClipData clip = clipboard.getPrimaryClip();
+        if (clip == null || clip.getItemCount() == 0 || session == null) return;
+        CharSequence paste = clip.getItemAt(0).coerceToText(v.getContext());
+        if (paste != null) session.write(paste.toString());
     }
 
     @Override

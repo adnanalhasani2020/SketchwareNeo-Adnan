@@ -3,44 +3,34 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/screen_import_sheet_card"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_marginStart="8dp"
-    android:layout_marginEnd="8dp"
-    android:layout_marginTop="4dp"
+    android:layout_height="match_parent"
     app:cardBackgroundColor="?attr/colorSurfaceContainerLow"
-    app:cardCornerRadius="28dp"
-    app:cardElevation="0dp"
-    app:strokeColor="?attr/colorOutlineVariant"
-    app:strokeWidth="1dp">
+    app:cardCornerRadius="24dp"
+    app:cardElevation="0dp">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingBottom="12dp">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-        <View
-            android:layout_width="42dp"
-            android:layout_height="4dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="12dp"
-            android:background="?attr/colorOutline"
-            android:alpha="0.8" />
+        <com.google.android.material.bottomsheet.BottomSheetDragHandleView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginEnd="20dp"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:layout_marginBottom="16dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <com.google.android.material.card.MaterialCardView
-                android:layout_width="68dp"
-                android:layout_height="68dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 app:cardBackgroundColor="?attr/colorSurfaceContainerHigh"
-                app:cardCornerRadius="18dp"
+                app:cardCornerRadius="12dp"
                 app:cardElevation="0dp"
                 app:strokeColor="?attr/colorOutlineVariant"
                 app:strokeWidth="1dp">
@@ -49,7 +39,7 @@
                     android:id="@+id/picker_header_icon"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:padding="17dp"
+                    android:padding="12dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_mtrl_folder_code"
                     app:tint="?attr/colorPrimary" />
@@ -69,7 +59,7 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:text="Import Project"
-                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                    android:textAppearance="?attr/textAppearanceTitleMedium"
                     android:textColor="?attr/colorOnSurface"
                     android:textStyle="bold" />
 
@@ -77,11 +67,11 @@
                     android:id="@+id/picker_subtitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="2dp"
                     android:ellipsize="end"
                     android:maxLines="2"
                     android:text="Choose a project to import from"
-                    android:textAppearance="?attr/textAppearanceBodyLarge"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
                     android:textColor="?attr/colorOnSurfaceVariant" />
             </LinearLayout>
         </LinearLayout>
@@ -92,8 +82,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="20dp"
-            android:layout_marginTop="18dp"
             android:layout_marginEnd="20dp"
+            android:layout_marginBottom="12dp"
             app:boxBackgroundMode="outline"
             app:boxCornerRadiusBottomEnd="24dp"
             app:boxCornerRadiusBottomStart="24dp"
@@ -105,32 +95,36 @@
                 android:id="@+id/picker_search_input"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:hint="Search projects..."
                 android:imeOptions="actionSearch"
                 android:inputType="text"
                 android:maxLines="1"
-                android:paddingTop="16dp"
-                android:paddingBottom="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
                 android:singleLine="true"
                 android:textColor="?attr/colorOnSurface"
-                android:textSize="16sp" />
+                android:textSize="14sp" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/picker_recycler"
             android:layout_width="match_parent"
-            android:layout_height="440dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:clipToPadding="false"
             android:overScrollMode="ifContentScrolls"
+            android:paddingHorizontal="20dp"
             android:scrollbars="vertical" />
 
         <TextView
             android:id="@+id/picker_empty"
             android:layout_width="match_parent"
-            android:layout_height="180dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:gravity="center"
             android:padding="20dp"
             android:text="No matches found"
-            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:visibility="gone" />
 
@@ -138,36 +132,30 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="20dp"
-            android:layout_marginTop="2dp"
+            android:layout_marginTop="8dp"
             android:layout_marginEnd="20dp"
+            android:layout_marginBottom="16dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/picker_cancel"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.Material3.Button.TonalButton"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="wrap_content"
                 android:layout_marginEnd="8dp"
                 android:layout_weight="1"
-                android:text="Cancel"
-                android:textAllCaps="false"
-                android:textSize="16sp"
-                app:cornerRadius="28dp"
-                app:strokeColor="?attr/colorOutlineVariant" />
+                android:text="Cancel" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/picker_continue"
                 style="@style/Widget.Material3.Button"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:enabled="false"
-                android:text="Import"
-                android:textAllCaps="false"
-                android:textSize="16sp"
-                app:cornerRadius="28dp" />
+                android:text="Import" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

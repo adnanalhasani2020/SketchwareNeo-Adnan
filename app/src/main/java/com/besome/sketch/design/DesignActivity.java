@@ -512,10 +512,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
             setupTerminalSlidePanel();
         }
 
-        if (terminalPlacement.equals("1")) {
-            setupTerminalSlidePanel();
-        }
-
         coordinatorLayout = findViewById(R.id.layout_coordinator);
         fileName = findViewById(R.id.file_name);
 

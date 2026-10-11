@@ -1,18 +1,14 @@
 package mod.sketchlibx.terminal;
 
 import android.os.Bundle;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.appbar.AppBarLayout;
 import com.google.android.material.appbar.MaterialToolbar;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import pro.sketchware.R;
-import pro.sketchware.utility.SketchwareUtil;
 import pro.sketchware.utility.ThemeUtils;
 
 /**
@@ -51,40 +47,12 @@ public class TerminalActivity extends BaseAppCompatActivity {
         appBarLayout.addView(toolbar);
         root.addView(appBarLayout);
 
-        terminalView = new NeoTerminalView(this, scId, true); // true: tab strip is now the real session switcher (+/kill/report-issue)
+        terminalView = new NeoTerminalView(this, scId, true); // The terminal strip owns session switching and close-all actions.
         terminalView.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
         root.addView(terminalView);
 
         setContentView(root);
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(Menu.NONE, 1, Menu.NONE, "Kill All Sessions");
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == 1) {
-            confirmKillSession();
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
-    }
-
-    private void confirmKillSession() {
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("Kill all sessions?")
-                .setMessage("Stops every shell (and anything running in them, like an in-progress `make`) for this project.")
-                .setPositiveButton("Kill all", (d, w) -> {
-                    TerminalSessionManager.killAllSessions(scId);
-                    SketchwareUtil.toast("Sessions killed");
-                    finish();
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
     }
 
     @Override

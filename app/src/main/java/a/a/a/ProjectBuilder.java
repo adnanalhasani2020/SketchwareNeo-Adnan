@@ -71,7 +71,6 @@ import mod.jbk.util.LogUtil;
 import mod.jbk.util.TestkeySignBridge;
 import mod.pranav.build.JarBuilder;
 import mod.pranav.viewbinding.ViewBindingBuilder;
-import pro.sketchware.activities.editor.gradle.CustomGradleBuildManager;
 import pro.sketchware.SketchApplication;
 import pro.sketchware.util.library.BuiltInLibraryManager;
 import pro.sketchware.utility.FilePathUtil;
@@ -282,13 +281,14 @@ public class ProjectBuilder {
             }
         } else {
             long savedTimeMillis = System.currentTimeMillis();
-            List<String> args = Arrays.asList(
+            List<String> args = new ArrayList<>(Arrays.asList(
                     "--debug",
                     "--verbose",
                     "--multi-dex",
                     "--output=" + yq.binDirectoryPath + File.separator + "dex",
                     proguard.isShrinkingEnabled() ? yq.proguardClassesPath : yq.compiledClassesPath
-            );
+            ));
+            args.addAll(mll.getJarOnlyLibraryJars());
 
             try {
                 LogUtil.d(TAG, "Running Dx with these arguments: " + args);
@@ -744,7 +744,7 @@ public class ProjectBuilder {
                             }
                         }
                     }
-                } else {
+                } else if (!(localLibrary.get("jarPath") instanceof String)) {
                     SketchwareUtil.toastError("Invalid DEX file path of enabled Local library #" + i1, Toast.LENGTH_LONG);
                 }
             } else {
@@ -821,7 +821,6 @@ public class ProjectBuilder {
         KotlinCompilerBridge.maybeAddKotlinBuiltInLibraryDependenciesIfPossible(this, builtInLibraryManager);
 
         ExtLibSelected.addUsedDependencies(yq.N.x, builtInLibraryManager);
-        CustomGradleBuildManager.addDeclaredBuiltInLibraries(yq.sc_id, builtInLibraryManager);
     }
 
     public BuiltInLibraryManager getBuiltInLibraryManager() {
@@ -942,7 +941,7 @@ public class ProjectBuilder {
             if (hashMap.containsKey("jarPath")) {
                 String name = hashMap.get("name").toString();
                 String jarPath = hashMap.get("jarPath").toString();
-                if (proguard.libIsProguardFMEnabled(name)) {
+                if (proguard.libIsProguardFMEnabled(name) || !hashMap.containsKey("dexPath")) {
                     programJars.add(jarPath);
                 } else {
                     libraryJars.add(jarPath);

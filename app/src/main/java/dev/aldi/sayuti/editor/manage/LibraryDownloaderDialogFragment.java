@@ -123,13 +123,21 @@ public class LibraryDownloaderDialogFragment extends BottomSheetDialogFragment {
         final boolean cancelled;
         final String message;
         final List<String> folders;
+        @Nullable
+        final List<String> bomEntries;
 
         RequestResult(DownloadRequest request, boolean success, boolean cancelled, String message, List<String> folders) {
+            this(request, success, cancelled, message, folders, null);
+        }
+
+        RequestResult(DownloadRequest request, boolean success, boolean cancelled, String message, List<String> folders,
+                      @Nullable List<String> bomEntries) {
             this.request = request;
             this.success = success;
             this.cancelled = cancelled;
             this.message = message;
             this.folders = folders;
+            this.bomEntries = bomEntries;
         }
     }
 
@@ -883,27 +891,72 @@ public class LibraryDownloaderDialogFragment extends BottomSheetDialogFragment {
         load.run();
     }
 
+    private DownloadRequest createMavenRequest(String group, String artifact, String version, boolean skip, boolean sources) {
+        boolean upgrade = false;
+        String oldFolder = null;
+        LocalLibrary installed = LocalLibrariesUtil.findInstalledLibraryByGroupArtifact(group, artifact);
+        if (installed != null) {
+            String installedDependency = installed.getMavenDependency();
+            String[] parts = installedDependency != null ? installedDependency.split(":") : new String[0];
+            String installedVersion = parts.length == 3 ? parts[2] : "unknown";
+            if (!installedVersion.equals(version)) {
+                upgrade = true;
+                oldFolder = installed.getName();
+            }
+        }
+        return new DownloadRequest(group, artifact, version, group + ":" + artifact + ":" + version, skip, sources, false, upgrade, oldFolder);
+    }
+
+    private void showBomChooser(List<RequestResult> boms, int index) {
+        if (rootView == null || index >= boms.size()) return;
+        RequestResult bom = boms.get(index);
+        List<String> entries = bom.bomEntries;
+        if (entries == null || entries.isEmpty()) {
+            showBomChooser(boms, index + 1);
+            return;
+        }
+        final String[] labels = entries.toArray(new String[0]);
+        final boolean[] checked = new boolean[labels.length];
+        androidx.appcompat.app.AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
+                .setTitle("BOM " + bom.request.requestString)
+                .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton("Download selected", null)
+                .setNegativeButton("Close", (d, w) -> showBomChooser(boms, index + 1))
+                .setNeutralButton("Select all", null)
+                .create();
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+                for (int i = 0; i < checked.length; i++) {
+                    checked[i] = true;
+                    dialog.getListView().setItemChecked(i, true);
+                }
+            });
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                List<DownloadRequest> requests = new ArrayList<>();
+                for (int i = 0; i < labels.length; i++) {
+                    if (!checked[i]) continue;
+                    String[] parts = labels[i].split(":");
+                    if (parts.length != 3) continue;
+                    requests.add(createMavenRequest(parts[0], parts[1], parts[2], bom.request.skipSubDeps, false));
+                }
+                if (requests.isEmpty()) {
+                    SketchwareUtil.toast("Select at least one library");
+                    return;
+                }
+                dialog.dismiss();
+                confirmAndStart(requests);
+            });
+        });
+        dialog.show();
+    }
+
     private void startMavenSelectionDownload() {
         if (selectedMaven.isEmpty()) return;
         boolean skip = skipSubDepsChecked();
         boolean sources = rootView != null && ((CheckBox) rootView.findViewById(R.id.cb_include_sources_maven)).isChecked();
         List<DownloadRequest> requests = new ArrayList<>();
         for (MavenSearchResult selected : selectedMaven.values()) {
-            String version = selected.getSelectedVersion();
-            boolean upgrade = false;
-            String oldFolder = null;
-            LocalLibrary installed = LocalLibrariesUtil.findInstalledLibraryByGroupArtifact(selected.getGroup(), selected.getArtifact());
-            if (installed != null) {
-                String installedDependency = installed.getMavenDependency();
-                String[] parts = installedDependency != null ? installedDependency.split(":") : new String[0];
-                String installedVersion = parts.length == 3 ? parts[2] : "unknown";
-                if (!installedVersion.equals(version)) {
-                    upgrade = true;
-                    oldFolder = installed.getName();
-                }
-            }
-            requests.add(new DownloadRequest(selected.getGroup(), selected.getArtifact(), version, selected.getFullCoordinate(),
-                    skip, sources, false, upgrade, oldFolder));
+            requests.add(createMavenRequest(selected.getGroup(), selected.getArtifact(), selected.getSelectedVersion(), skip, sources));
         }
         confirmAndStart(requests);
     }
@@ -1170,6 +1223,7 @@ public class LibraryDownloaderDialogFragment extends BottomSheetDialogFragment {
         final List<String>[] completed = new List[1];
         final ResolverFailure[] failure = new ResolverFailure[1];
         final long[] lastProgress = new long[1];
+        final List<String>[] bomEntries = new List[1];
 
         try {
             resolver.resolveDependency(new DependencyResolver.DependencyResolverCallback() {
@@ -1287,6 +1341,40 @@ public class LibraryDownloaderDialogFragment extends BottomSheetDialogFragment {
                 }
 
                 @Override
+                public void onNote(@NonNull Artifact artifact, @NonNull String note) {
+                    handler.post(() -> {
+                        if (rootView == null) return;
+                        DependencyDownloadItem item = findOrCreateDependencyItem(artifact);
+                        item.setNote(note);
+                        dependencyAdapter.updateDependency(item);
+                    });
+                }
+
+                @Override
+                public void onVariantSelected(@NonNull Artifact from, @NonNull Artifact to, @NonNull String detail) {
+                    handler.post(() -> {
+                        if (rootView == null) return;
+                        DependencyDownloadItem item = findOrCreateDependencyItem(from);
+                        item.setNote("Using " + to.getGroupId() + ":" + to.getArtifactId() + " (" + detail + ")");
+                        item.setState(DependencyDownloadItem.DownloadState.COMPLETED);
+                        dependencyAdapter.updateDependency(item);
+                    });
+                }
+
+                @Override
+                public void onBomResolved(@NonNull Artifact artifact, @NonNull List<String> managed) {
+                    bomEntries[0] = new ArrayList<>(managed);
+                    handler.post(() -> {
+                        if (rootView == null) return;
+                        DependencyDownloadItem item = findOrCreateDependencyItem(artifact);
+                        item.setNote("BOM: " + managed.size() + " managed libraries (metadata only, nothing compiled)");
+                        item.setState(DependencyDownloadItem.DownloadState.COMPLETED);
+                        dependencyAdapter.updateDependency(item);
+                        updateOverallProgress();
+                    });
+                }
+
+                @Override
                 public void onFailure(@NonNull ResolverFailure resolverFailure) {
                     failure[0] = resolverFailure;
                     handler.post(() -> markCoordinateError(resolverFailure));
@@ -1309,6 +1397,9 @@ public class LibraryDownloaderDialogFragment extends BottomSheetDialogFragment {
         if (failure[0] != null) {
             boolean cancelled = failure[0].stage == ResolverFailure.Stage.CANCELLED;
             return new RequestResult(request, false, cancelled, failure[0].toUserMessage(), new ArrayList<>());
+        }
+        if ((completed[0] == null || completed[0].isEmpty()) && bomEntries[0] != null) {
+            return new RequestResult(request, true, false, "BOM", new ArrayList<>(), bomEntries[0]);
         }
         if (completed[0] == null || completed[0].isEmpty()) {
             ResolverFailure missing = new ResolverFailure(ResolverFailure.Stage.UNEXPECTED, request.key(),
@@ -1430,6 +1521,17 @@ public class LibraryDownloaderDialogFragment extends BottomSheetDialogFragment {
         LinearProgressIndicator overall = rootView.findViewById(R.id.overall_progress);
         overall.setIndeterminate(false);
         overall.setProgress(100);
+
+        List<RequestResult> boms = new ArrayList<>();
+        for (RequestResult result : results) {
+            if (result.success && result.bomEntries != null && !result.bomEntries.isEmpty()) boms.add(result);
+        }
+
+        if (failed.isEmpty() && cancelledCount == 0 && !boms.isEmpty()) {
+            returnToInput();
+            showBomChooser(boms, 0);
+            return;
+        }
 
         if (failed.isEmpty() && cancelledCount == 0) {
             if (!successFolders.isEmpty()) {

@@ -103,6 +103,7 @@ public final class GradleSyncEngine {
         public Map<String, String> superseded = new HashMap<>();
         public Map<String, Boolean> skipSub = new HashMap<>();
         public Map<String, Boolean> resolvedSkip = new HashMap<>();
+        public List<String> boms = new ArrayList<>();
     }
 
     private static final Object STORE_LOCK = new Object();
@@ -137,6 +138,7 @@ public final class GradleSyncEngine {
             if (store.superseded == null) store.superseded = new HashMap<>();
             if (store.skipSub == null) store.skipSub = new HashMap<>();
             if (store.resolvedSkip == null) store.resolvedSkip = new HashMap<>();
+            if (store.boms == null) store.boms = new ArrayList<>();
             if (store.status == null) store.status = "NONE";
             if (store.message == null) store.message = "";
             if (store.appHash == null) store.appHash = "";
@@ -255,8 +257,7 @@ public final class GradleSyncEngine {
     private static boolean folderComplete(String folderName) {
         File dir = new File(localLibsDir(), folderName);
         File jar = new File(dir, "classes.jar");
-        File dex = new File(dir, "classes.dex");
-        if (!dir.isDirectory() || !jar.isFile() || jar.length() == 0 || !dex.isFile() || dex.length() == 0) return false;
+        if (!dir.isDirectory() || !jar.isFile() || jar.length() == 0) return false;
         File manifest = new File(dir, "AndroidManifest.xml");
         return !manifest.isFile() || new File(dir, "config").isFile();
     }
@@ -274,6 +275,9 @@ public final class GradleSyncEngine {
         }
 
         String coordinate = dep.coordinate();
+        if (store.boms.contains(coordinate)) {
+            return new Row(dep, DepState.READY, null, "BOM / metadata only (nothing to compile)", Collections.emptyList(), 0);
+        }
         Set<String> folders = new LinkedHashSet<>();
         List<String> recorded = store.folders.get(coordinate);
         if (recorded != null && !recorded.isEmpty()) {
@@ -557,6 +561,7 @@ public final class GradleSyncEngine {
         boolean skipSub = wantsSkip(scId, loadStore(scId), dep);
         List<String> resolved = new ArrayList<>();
         List<String> providedBuiltIns = new ArrayList<>();
+        List<String> bomManaged = new ArrayList<>();
         Map<String, String> folderCoordinates = new LinkedHashMap<>();
         String[] failure = new String[1];
         try {
@@ -615,6 +620,22 @@ public final class GradleSyncEngine {
                 }
 
                 @Override
+                public void onNote(@NonNull Artifact artifact, @NonNull String note) {
+                    listener.onLog("Note for " + artifact + ": " + note);
+                }
+
+                @Override
+                public void onVariantSelected(@NonNull Artifact from, @NonNull Artifact to, @NonNull String detail) {
+                    listener.onLog("Variant: " + from + " -> " + to + " (" + detail + ")");
+                }
+
+                @Override
+                public void onBomResolved(@NonNull Artifact artifact, @NonNull List<String> managed) {
+                    bomManaged.addAll(managed);
+                    listener.onLog(artifact + " is a BOM: " + managed.size() + " managed artifact(s), nothing to download");
+                }
+
+                @Override
                 public void onDependencySkipped(@NonNull Artifact artifact, @NonNull String reason) {
                     listener.onLog("Skipped " + artifact + ": " + reason);
                 }
@@ -646,6 +667,12 @@ public final class GradleSyncEngine {
             listener.onLog("error: " + coordinate + ": " + failure[0]);
             return failure[0];
         }
+        if (resolved.isEmpty() && !bomManaged.isEmpty()) {
+            updateStore(scId, store -> {
+                if (!store.boms.contains(coordinate)) store.boms.add(coordinate);
+            });
+            return null;
+        }
         if (resolved.isEmpty()) {
             String message = "Resolver finished without producing any artifact for " + coordinate;
             listener.onLog("error: " + message);
@@ -653,7 +680,7 @@ public final class GradleSyncEngine {
         }
         for (String folder : resolved) {
             if (!folderComplete(folder)) {
-                String message = "Resolved artifact '" + folder + "' is incomplete (missing classes.jar or classes.dex)";
+                String message = "Resolved artifact '" + folder + "' is incomplete (missing or invalid classes.jar)";
                 listener.onLog("error: " + message);
                 return message;
             }

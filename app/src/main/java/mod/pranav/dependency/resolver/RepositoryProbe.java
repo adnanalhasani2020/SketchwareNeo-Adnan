@@ -43,16 +43,21 @@ public final class RepositoryProbe {
         }
     }
 
+    public enum Kind {POM, MODULE, FILE}
+
     public static final class Result {
         public final int foundIndex;
         @Nullable
         public final String foundUrl;
+        @Nullable
+        public final Kind foundKind;
         public final List<Attempt> attempts;
         public final boolean cancelled;
 
-        Result(int foundIndex, @Nullable String foundUrl, List<Attempt> attempts, boolean cancelled) {
+        Result(int foundIndex, @Nullable String foundUrl, @Nullable Kind foundKind, List<Attempt> attempts, boolean cancelled) {
             this.foundIndex = foundIndex;
             this.foundUrl = foundUrl;
+            this.foundKind = foundKind;
             this.attempts = attempts;
             this.cancelled = cancelled;
         }
@@ -75,11 +80,21 @@ public final class RepositoryProbe {
             if (allNetworkFailures()) {
                 out.append("No repository could be reached while looking for ").append(coordinate).append(". Check the internet connection.");
             } else {
-                out.append(coordinate).append(" was not found in any configured repository.");
+                out.append(coordinate).append(" was not found in any configured repository (checked POM, Gradle module metadata and the .aar/.jar file in each).");
             }
+            String currentRepo = null;
+            StringBuilder line = new StringBuilder();
             for (Attempt attempt : attempts) {
-                out.append("\n- ").append(attempt.repo.name).append(": ").append(attempt.detail);
+                if (!attempt.repo.name.equals(currentRepo)) {
+                    if (currentRepo != null) out.append("\n- ").append(currentRepo).append(": ").append(line);
+                    currentRepo = attempt.repo.name;
+                    line.setLength(0);
+                } else {
+                    line.append("; ");
+                }
+                line.append(attempt.detail);
             }
+            if (currentRepo != null) out.append("\n- ").append(currentRepo).append(": ").append(line);
             return out.toString();
         }
     }
@@ -88,6 +103,12 @@ public final class RepositoryProbe {
     public static String pomUrl(@NonNull String repoUrl, @NonNull String group, @NonNull String artifact, @NonNull String version) {
         String base = repoUrl.endsWith("/") ? repoUrl.substring(0, repoUrl.length() - 1) : repoUrl;
         return base + "/" + group.replace('.', '/') + "/" + artifact + "/" + version + "/" + artifact + "-" + version + ".pom";
+    }
+
+    @NonNull
+    public static String moduleUrl(@NonNull String repoUrl, @NonNull String group, @NonNull String artifact, @NonNull String version) {
+        String base = repoUrl.endsWith("/") ? repoUrl.substring(0, repoUrl.length() - 1) : repoUrl;
+        return base + "/" + group.replace('.', '/') + "/" + artifact + "/" + version + "/" + artifact + "-" + version + ".module";
     }
 
     @NonNull
@@ -114,18 +135,39 @@ public final class RepositoryProbe {
         List<Attempt> attempts = new ArrayList<>();
         for (int index : probeOrder(repos)) {
             if (cancelled != null && cancelled.getAsBoolean()) {
-                return new Result(-1, null, attempts, true);
+                return new Result(-1, null, null, attempts, true);
             }
             Repo repo = repos.get(index);
-            String url = pomUrl(repo.url, group, artifact, version);
-            HttpFetcher.Response response = HttpFetcher.getWithRetry(url, POM_LIMIT_BYTES, POM_ATTEMPTS, cancelled);
-            if (response.isSuccess() && !response.body.trim().isEmpty()) {
-                attempts.add(new Attempt(repo, url, response.code, "found"));
-                return new Result(index, url, attempts, false);
+
+            String pomUrl = pomUrl(repo.url, group, artifact, version);
+            HttpFetcher.Response pom = HttpFetcher.getWithRetry(pomUrl, POM_LIMIT_BYTES, POM_ATTEMPTS, cancelled);
+            if (pom.isSuccess() && !pom.body.trim().isEmpty()) {
+                attempts.add(new Attempt(repo, pomUrl, pom.code, "POM found"));
+                return new Result(index, pomUrl, Kind.POM, attempts, false);
             }
-            String detail = response.isSuccess() ? "empty POM response" : response.describe();
-            attempts.add(new Attempt(repo, url, response.isSuccess() ? 0 : response.code, detail));
+            attempts.add(new Attempt(repo, pomUrl, pom.isSuccess() ? 0 : pom.code, "pom: " + (pom.isSuccess() ? "empty response" : pom.describe())));
+            if (pom.isNetworkFailure()) continue;
+
+            String moduleUrl = moduleUrl(repo.url, group, artifact, version);
+            HttpFetcher.Response module = HttpFetcher.getWithRetry(moduleUrl, POM_LIMIT_BYTES, POM_ATTEMPTS, cancelled);
+            if (module.isSuccess() && !module.body.trim().isEmpty()) {
+                attempts.add(new Attempt(repo, moduleUrl, module.code, "module metadata found (no POM)"));
+                return new Result(index, moduleUrl, Kind.MODULE, attempts, false);
+            }
+            attempts.add(new Attempt(repo, moduleUrl, module.isSuccess() ? 0 : module.code, "module: " + (module.isSuccess() ? "empty response" : module.describe())));
+            if (module.isNetworkFailure()) continue;
+
+            for (String extension : new String[]{"aar", "jar"}) {
+                String fileUrl = fileUrl(repo.url, group, artifact, version, extension);
+                int status = HttpFetcher.statusOf(fileUrl);
+                if (status >= 200 && status < 300) {
+                    attempts.add(new Attempt(repo, fileUrl, status, extension + " file found (no POM)"));
+                    return new Result(index, fileUrl, Kind.FILE, attempts, false);
+                }
+                attempts.add(new Attempt(repo, fileUrl, status, extension + ": " + (status < 0 ? "unreachable" : FailureFormatter.httpStatus(status))));
+                if (status < 0) break;
+            }
         }
-        return new Result(-1, null, attempts, false);
+        return new Result(-1, null, null, attempts, false);
     }
 }

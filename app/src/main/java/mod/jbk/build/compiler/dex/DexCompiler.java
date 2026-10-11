@@ -59,9 +59,16 @@ public class DexCompiler {
             }
         }
 
+        boolean separateLibraryDex = minApiLevel < 21;
+        java.util.Set<String> jarOnlyLibraries = new java.util.LinkedHashSet<>();
+        for (String jarOnlyLibrary : builder.mll.getJarOnlyLibraryJars()) {
+            jarOnlyLibraries.add(jarOnlyLibrary.trim());
+            if (!separateLibraryDex) programFiles.add(Paths.get(jarOnlyLibrary));
+        }
+
         Collection<Path> libraryFiles = new LinkedList<>();
         for (String jarPath : builder.getClasspath().split(":")) {
-            if (!jarPath.trim().isEmpty()) {
+            if (!jarPath.trim().isEmpty() && (separateLibraryDex || !jarOnlyLibraries.contains(jarPath.trim()))) {
                 libraryFiles.add(Paths.get(jarPath));
             }
         }
@@ -82,5 +89,44 @@ public class DexCompiler {
         }
 
         D8.run(commandBuilder.build());
+
+        if (separateLibraryDex && !jarOnlyLibraries.isEmpty()) {
+            compileLibrariesSeparately(builder, jarOnlyLibraries, libraryFiles, minApiLevel);
+        }
+    }
+
+    private static void compileLibrariesSeparately(ProjectBuilder builder, java.util.Set<String> jarOnlyLibraries,
+                                                   Collection<Path> libraryFiles, int minApiLevel) throws CompilationFailedException {
+        File dexDirectory = new File(builder.yq.binDirectoryPath, "dex");
+        File scratchDirectory = new File(builder.yq.binDirectoryPath, "libdex");
+        dexDirectory.mkdirs();
+        for (String jar : jarOnlyLibraries) {
+            String id = Integer.toHexString(jar.hashCode());
+            File outputDirectory = new File(scratchDirectory, id);
+            outputDirectory.mkdirs();
+            Collection<Path> classpath = new LinkedList<>();
+            for (Path path : libraryFiles) {
+                if (!path.toString().equals(jar)) classpath.add(path);
+            }
+            D8.run(D8Command.builder()
+                    .setMode(CompilationMode.RELEASE)
+                    .setIntermediate(false)
+                    .setMinApiLevel(minApiLevel)
+                    .setDisableDesugaring(false)
+                    .addLibraryFiles(classpath)
+                    .setOutput(outputDirectory.toPath(), OutputMode.DexIndexed)
+                    .addProgramFiles(Paths.get(jar))
+                    .build());
+            File[] produced = outputDirectory.listFiles((dir, name) -> name.endsWith(".dex"));
+            if (produced != null) {
+                for (File dex : produced) {
+                    File target = new File(dexDirectory, "lib_" + id + "_" + dex.getName());
+                    if (!dex.renameTo(target)) {
+                        throw new CompilationFailedException("Could not move " + dex.getAbsolutePath() + " to " + target.getAbsolutePath());
+                    }
+                }
+            }
+        }
+        FileUtil.deleteFile(scratchDirectory.getAbsolutePath());
     }
 }
