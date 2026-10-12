@@ -140,7 +140,6 @@ import pro.sketchware.dialogs.BuildSettingsBottomSheet;
 import pro.sketchware.utility.FileUtil;
 import pro.sketchware.utility.FilePathUtil;
 import pro.sketchware.activities.editor.gradle.CustomGradleBuildManager;
-import pro.sketchware.activities.editor.gradle.UnityAdsDependencyManager;
 import pro.sketchware.utility.SketchwareUtil;
 import pro.sketchware.utility.ThemeUtils;
 import pro.sketchware.utility.apk.ApkSignatures;
@@ -1375,11 +1374,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 var dataManager = jC.a(sc_id);
                 var libraryManager = jC.c(sc_id);
                 q.a(libraryManager, fileManager, dataManager);
-                if (q.N.isUnityAdsEnabled) {
-                    onProgress("Preparing Unity Ads dependencies...", 2);
-                    UnityAdsDependencyManager.prepareForBuild(activity.getApplicationContext(), sc_id);
-                    if (canceled) return;
-                }
                 builder.buildBuiltInLibraryInformation();
                 q.b(fileManager, dataManager, libraryManager, builder.getBuiltInLibraryManager());
                 q.f();

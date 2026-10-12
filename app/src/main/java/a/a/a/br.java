@@ -1,6 +1,8 @@
 package a.a.a;
 
 import android.content.Intent;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -14,8 +16,6 @@ import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.ListAdapter;
 import androidx.recyclerview.widget.RecyclerView;
-
-import com.google.android.material.color.MaterialColors;
 
 import com.besome.sketch.beans.ComponentBean;
 import com.besome.sketch.beans.EventBean;
@@ -202,12 +202,6 @@ public class br extends qA implements View.OnClickListener {
                         ComponentBean.getComponentName(requireContext(), componentBean.type));
                 binding.imgIcon.setImageResource(
                         ComponentBean.getIconResource(componentBean.type));
-                if (ComponentBean.COMPONENT_TYPE_UNITY_ADS.equals(componentBean.type)) {
-                    binding.imgIcon.setColorFilter(MaterialColors.getColor(
-                            binding.imgIcon, com.google.android.material.R.attr.colorOnSurface));
-                } else {
-                    binding.imgIcon.clearColorFilter();
-                }
 
                 switch (componentBean.type) {
                     case ComponentBean.COMPONENT_TYPE_SHAREDPREF -> binding.tvComponentId
@@ -270,8 +264,6 @@ public class br extends qA implements View.OnClickListener {
                             layoutParams.setMargins(0, 0, (int) wB.a(requireContext(), 4.0f), 0);
                             previewBinding.getRoot().setLayoutParams(layoutParams);
                             previewBinding.icon.setImageResource(oq.getEventIconResource(event.eventName));
-                            previewBinding.icon.setColorFilter(MaterialColors.getColor(
-                                    previewBinding.icon, com.google.android.material.R.attr.colorOnSurface));
                             previewBinding.iconBg.setBackgroundResource(
                                     R.drawable.circle_bg_surface);
                             binding.eventsPreview.addView(previewBinding.getRoot());
@@ -289,8 +281,9 @@ public class br extends qA implements View.OnClickListener {
                         layoutParams2.setMargins(0, 0, (int) wB.a(requireContext(), 4.0f), 0);
                         previewBinding.getRoot().setLayoutParams(layoutParams2);
                         previewBinding.icon.setImageResource(oq.getEventIconResource(eventName));
-                        previewBinding.icon.setColorFilter(MaterialColors.getColor(
-                                previewBinding.icon, com.google.android.material.R.attr.colorOutline));
+                        ColorMatrix colorMatrix = new ColorMatrix();
+                        colorMatrix.setSaturation(0.0f);
+                        previewBinding.icon.setColorFilter(new ColorMatrixColorFilter(colorMatrix));
                         binding.eventsPreview.addView(previewBinding.getRoot());
                         previewBinding.getRoot().setScaleX(0.8f);
                         previewBinding.getRoot().setScaleY(0.8f);
@@ -385,10 +378,9 @@ public class br extends qA implements View.OnClickListener {
                 @Override
                 public void onBindViewHolder(@NonNull EventViewHolder holder, int position) {
                     var event = getItem(position);
+                    holder.button.onEventAdded();
                     holder.button.getName().setText(event.eventName);
                     holder.button.getIcon().setImageResource(oq.getEventIconResource(event.eventName));
-                    // Apply state tint after replacing the drawable; setImageResource may reset it.
-                    holder.button.onEventAdded();
                     holder.button.setClickListener(v -> {
                         if (!mB.a()) {
                             openEvent(event.targetId, event.eventName, event.eventName);
@@ -429,10 +421,9 @@ public class br extends qA implements View.OnClickListener {
                 @Override
                 public void onBindViewHolder(@NonNull EventViewHolder holder, int position) {
                     var eventName = getItem(position);
+                    holder.button.onEventAvailableToAdd();
                     holder.button.getName().setText(eventName);
                     holder.button.getIcon().setImageResource(oq.getEventIconResource(eventName));
-                    // Apply state tint after replacing the drawable; setImageResource may reset it.
-                    holder.button.onEventAvailableToAdd();
                     holder.button.setClickListener(v -> {
                         if (!mB.a()) {
                             var component = components.get(getLayoutPosition());
