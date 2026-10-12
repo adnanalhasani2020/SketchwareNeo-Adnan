@@ -2586,6 +2586,126 @@ public class BlocksHandler {
         arrayList.add(hashMap);
 
         hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsInitializeFromManager");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (_unity_game_id != null && !_unity_game_id.isEmpty()) {\r\nUnityAds.initialize(getApplicationContext(), _unity_game_id, _unity_test_mode, _%1$s_initialization_listener);\r\n} else {\r\nSketchwareUtil.showMessage(getApplicationContext(), \"Unity Ads Game ID is missing. Configure it in Ad Networks.\");\r\n}");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads initialize from Ad Manager in %m.activity");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsInitializeWithGameId");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "UnityAds.initialize(%4$s.this.getApplicationContext(), %2$s, %3$s, _%1$s_initialization_listener);");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads initialize with Game ID %s.gameId test mode %b.testMode in %m.activity");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsLoadPlacement");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (UnityAds.isInitialized()) { UnityAds.load((%2$s == null ? \"\" : %2$s.trim()), _%1$s_load_listener); } else { SketchwareUtil.showMessage(getApplicationContext(), \"Initialize Unity Ads before loading a placement.\"); }");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads load placement %s.placementId");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsShowPlacement");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (UnityAds.isInitialized()) { UnityAds.show(%3$s.this, (%2$s == null ? \"\" : %2$s.trim()), _%1$s_show_listener); } else { SketchwareUtil.showMessage(getApplicationContext(), \"Initialize Unity Ads before showing a placement.\"); }");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads show placement %s.placementId in %m.activity");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsSetActivePlacement");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "_%1$s_unity_placement_id = (%2$s == null ? \"\" : String.valueOf(%2$s).trim());");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads set active placement to %s.placementId");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsGetActivePlacement");
+        hashMap.put("type", "s");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "_%1$s_unity_placement_id");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads active placement");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsConfiguredPlacement");
+        hashMap.put("type", "s");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "\"%2$s\"");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads configured placement %m.unityplacement");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsLoadActivePlacement");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (UnityAds.isInitialized()) { if (_%1$s_unity_placement_id != null && !_%1$s_unity_placement_id.trim().isEmpty()) { UnityAds.load(_%1$s_unity_placement_id.trim(), _%1$s_load_listener); } else { SketchwareUtil.showMessage(getApplicationContext(), \"Set a Unity Ads active placement first.\"); } } else { SketchwareUtil.showMessage(getApplicationContext(), \"Initialize Unity Ads before loading a placement.\"); }");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads load active placement");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsShowActivePlacement");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (UnityAds.isInitialized()) { if (_%1$s_unity_placement_id != null && !_%1$s_unity_placement_id.trim().isEmpty()) { UnityAds.show(%2$s.this, _%1$s_unity_placement_id.trim(), _%1$s_show_listener); } else { SketchwareUtil.showMessage(getApplicationContext(), \"Set a Unity Ads active placement first.\"); } } else { SketchwareUtil.showMessage(getApplicationContext(), \"Initialize Unity Ads before showing a placement.\"); }");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads show active placement in %m.activity");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsIsInitialized");
+        hashMap.put("type", "b");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "UnityAds.isInitialized()");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads is initialized");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsLoadBanner");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (UnityAds.isInitialized()) {\r\nif (%4$s instanceof ViewGroup) {\r\nViewGroup _unityContainer = (ViewGroup) %4$s;\r\nif (_%1$s_banner_view != null) { if (_%1$s_banner_view.getParent() instanceof ViewGroup) { ((ViewGroup) _%1$s_banner_view.getParent()).removeView(_%1$s_banner_view); } _%1$s_banner_view.destroy(); }\r\nBannerView _unityBanner = new BannerView(%2$s.this, (%3$s == null ? \"\" : %3$s.trim()), new UnityBannerSize(%5$s, %6$s));\r\n_unityBanner.setListener(_%1$s_banner_listener);\r\n_unityContainer.addView(_unityBanner, new ViewGroup.LayoutParams((int) (%5$s * getResources().getDisplayMetrics().density), (int) (%6$s * getResources().getDisplayMetrics().density)));\r\n_%1$s_banner_view = _unityBanner;\r\n_unityBanner.load();\r\n} else { SketchwareUtil.showMessage(getApplicationContext(), \"Unity banner container must be a ViewGroup.\"); }\r\n} else { SketchwareUtil.showMessage(getApplicationContext(), \"Initialize Unity Ads before loading a banner.\"); }");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads load banner in %m.activity placement %s.placementId into %m.view width %d.width height %d.height");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
+        hashMap.put("name", "unityAdsDestroyBanner");
+        hashMap.put("type", " ");
+        hashMap.put("typeName", "");
+        hashMap.put("code", "if (_%1$s_banner_view != null) { if (_%1$s_banner_view.getParent() instanceof ViewGroup) { ((ViewGroup) _%1$s_banner_view.getParent()).removeView(_%1$s_banner_view); } _%1$s_banner_view.destroy(); _%1$s_banner_view = null; }");
+        hashMap.put("color", "#2AA4E2");
+        hashMap.put("palette", "-1");
+        hashMap.put("spec", "%m.unityads destroy banner");
+        arrayList.add(hashMap);
+
+        hashMap = new HashMap<>();
         hashMap.put("name", "getResString");
         hashMap.put("type", "s");
         hashMap.put("code", "getString(%s)");

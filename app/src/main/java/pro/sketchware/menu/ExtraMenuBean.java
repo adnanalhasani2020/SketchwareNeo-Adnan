@@ -17,6 +17,9 @@ import com.besome.sketch.beans.AdTestDeviceBean;
 import com.besome.sketch.beans.AdUnitBean;
 import com.besome.sketch.beans.ComponentBean;
 import com.besome.sketch.beans.ProjectFileBean;
+import com.besome.sketch.beans.ProjectLibraryBean;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import com.besome.sketch.editor.LogicEditorActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputLayout;
@@ -409,6 +412,14 @@ public class ExtraMenuBean {
                 menus = getComponentMenus(ComponentBean.COMPONENT_TYPE_GYROSCOPE);
                 break;
 
+            case "unityads":
+                title = "Select Unity Ads Component";
+                menus = getComponentMenus(ComponentBean.COMPONENT_TYPE_UNITY_ADS);
+                break;
+            case "unityplacement":
+                title = "Select Unity Ads Placement";
+                menus = getUnityPlacementMenus();
+                break;
             case "interstitialad":
                 title = logicEditor.getString(R.string.logic_editor_title_select_component_interstitialad);
                 menus = getComponentMenus(ComponentBean.COMPONENT_TYPE_INTERSTITIAL_AD);
@@ -738,6 +749,24 @@ public class ExtraMenuBean {
 
     private ArrayList<String> getVarMenus(int type) {
         return projectDataManager.e(javaName, type);
+    }
+
+    private ArrayList<String> getUnityPlacementMenus() {
+        ArrayList<String> placements = new ArrayList<>();
+        try {
+            ProjectLibraryBean settings = jC.c(sc_id).b();
+            if (settings == null || !settings.isUnityAdsEnabled()) return placements;
+            JSONArray array = new JSONArray(settings.getConfigurationString(ProjectLibraryBean.CONFIG_UNITY_PLACEMENTS, "[]"));
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+                String id = item.optString("id", "").trim();
+                if (!id.isEmpty() && !placements.contains(id)) placements.add(id);
+            }
+        } catch (Exception ignored) {
+            // An unconfigured project should not crash the logic editor.
+        }
+        return placements;
     }
 
     private ArrayList<String> getListMenus(int type) {

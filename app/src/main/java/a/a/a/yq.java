@@ -437,11 +437,17 @@ public class yq {
         if (appCompat.useYn.equals(ProjectLibraryBean.LIB_USE_Y)) {
             N.g = true;
         }
-        if (adMob.useYn.equals(ProjectLibraryBean.LIB_USE_Y)) {
-            N.isAdMobEnabled = true;
+        N.isAdMobEnabled = adMob.isAdMobEnabled();
+        N.isUnityAdsEnabled = adMob.isUnityAdsEnabled();
+        if (N.isAdMobEnabled || N.isUnityAdsEnabled) {
             N.addPermission(jq.PERMISSION_INTERNET);
             N.addPermission(jq.PERMISSION_ACCESS_NETWORK_STATE);
+        }
+        if (N.isAdMobEnabled) {
             N.setupAdmob(adMob);
+        }
+        if (N.isUnityAdsEnabled) {
+            N.setupUnityAds(adMob);
         }
         if (googleMaps.useYn.equals(ProjectLibraryBean.LIB_USE_Y)) {
             N.isMapUsed = true;
@@ -518,6 +524,16 @@ public class yq {
                             N.x.isFCMUsed = true;
                     case ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN ->
                             N.x.isFBGoogleUsed = true;
+                    case ComponentBean.COMPONENT_TYPE_UNITY_ADS -> {
+                        // Existing Unity Ads components require the SDK even if the library switch
+                        // was later disabled; otherwise generated source would reference missing classes.
+                        if (!N.isUnityAdsEnabled) {
+                            N.isUnityAdsEnabled = true;
+                            N.setupUnityAds(adMob);
+                        }
+                        N.addPermission(activity.getActivityName(), jq.PERMISSION_INTERNET);
+                        N.addPermission(activity.getActivityName(), jq.PERMISSION_ACCESS_NETWORK_STATE);
+                    }
                     default -> {
                     }
                 }

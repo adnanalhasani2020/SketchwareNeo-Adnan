@@ -1,7 +1,5 @@
 package com.besome.sketch.editor.manage.library;
 
-import static android.text.TextUtils.isEmpty;
-
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
@@ -14,8 +12,6 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import com.besome.sketch.beans.ProjectLibraryBean;
-import com.besome.sketch.editor.manage.library.admob.AdmobActivity;
-import com.besome.sketch.editor.manage.library.admob.ManageAdmobActivity;
 import com.besome.sketch.editor.manage.library.compat.ManageCompatActivity;
 import com.besome.sketch.editor.manage.library.firebase.ManageFirebaseActivity;
 import com.besome.sketch.editor.manage.library.googlemap.ManageGoogleMapActivity;
@@ -62,6 +58,7 @@ public class ManageLibraryActivity extends BaseAppCompatActivity implements View
     private String originalFirebaseUseYn = "N";
     private String originalCompatUseYn = "N";
     private String originalAdmobUseYn = "N";
+    private boolean admobSettingsChanged = false;
     private String originalGoogleMapUseYn = "N";
 
     private final List<LibraryItemView> libraryItems = new ArrayList<>();
@@ -148,13 +145,7 @@ public class ManageLibraryActivity extends BaseAppCompatActivity implements View
     }
 
     private void toAdmobActivity(ProjectLibraryBean libraryBean) {
-        Intent intent;
-        if (!isEmpty(libraryBean.reserved1) && !isEmpty(libraryBean.appId)) {
-            intent = new Intent(getApplicationContext(), ManageAdmobActivity.class);
-        } else {
-            intent = new Intent(getApplicationContext(), AdmobActivity.class);
-        }
-
+        Intent intent = new Intent(getApplicationContext(), ManageAdNetworksActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         intent.putExtra("sc_id", sc_id);
         intent.putExtra("admob", libraryBean);
@@ -241,6 +232,7 @@ public class ManageLibraryActivity extends BaseAppCompatActivity implements View
 
                 case REQUEST_CODE_ADMOB_ACTIVITY:
                     initializeLibrary(data.getParcelableExtra("admob"));
+                    admobSettingsChanged = true;
                     break;
 
                 case REQUEST_CODE_GOOGLE_MAPS_ACTIVITY:
@@ -290,6 +282,7 @@ public class ManageLibraryActivity extends BaseAppCompatActivity implements View
         return !originalCompatUseYn.equals(compatLibraryBean.useYn)
                 || !originalFirebaseUseYn.equals(firebaseLibraryBean.useYn)
                 || !originalAdmobUseYn.equals(admobLibraryBean.useYn)
+                || admobSettingsChanged
                 || !originalGoogleMapUseYn.equals(googleMapLibraryBean.useYn);
     }
 
@@ -426,6 +419,7 @@ public class ManageLibraryActivity extends BaseAppCompatActivity implements View
             originalCompatUseYn = savedInstanceState.getString("originalCompatUseYn");
             admobLibraryBean = savedInstanceState.getParcelable("admob");
             originalAdmobUseYn = savedInstanceState.getString("originalAdmobUseYn");
+            admobSettingsChanged = savedInstanceState.getBoolean("admobSettingsChanged", false);
             googleMapLibraryBean = savedInstanceState.getParcelable("google_map");
             originalGoogleMapUseYn = savedInstanceState.getString("originalGoogleMapUseYn");
             nativeToolsLibraryBean = new ProjectLibraryBean(ProjectLibraryBean.PROJECT_LIB_TYPE_NATIVE_TOOLS);
@@ -474,6 +468,7 @@ public class ManageLibraryActivity extends BaseAppCompatActivity implements View
         outState.putString("originalFirebaseUseYn", originalFirebaseUseYn);
         outState.putString("originalCompatUseYn", originalCompatUseYn);
         outState.putString("originalAdmobUseYn", originalAdmobUseYn);
+        outState.putBoolean("admobSettingsChanged", admobSettingsChanged);
         outState.putString("originalGoogleMapUseYn", originalGoogleMapUseYn);
         super.onSaveInstanceState(outState);
     }

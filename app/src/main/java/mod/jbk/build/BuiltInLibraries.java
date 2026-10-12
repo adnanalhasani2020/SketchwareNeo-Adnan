@@ -3,10 +3,25 @@ package mod.jbk.build;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import com.android.tools.r8.CompilationMode;
+import com.android.tools.r8.D8;
+import com.android.tools.r8.D8Command;
+import com.android.tools.r8.OutputMode;
+
 import androidx.annotation.NonNull;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -119,6 +134,7 @@ public class BuiltInLibraries {
     public static String OKIO_JVM = "okio-jvm-3.15.0";
     public static String OTPVIEW = "OTPView-0.1.0";
     public static String PATTERN_LOCK_VIEW = "pattern-lock-view";
+    public static String UNITY_ADS = "unity-ads-4.20.1";
     public static String PLAY_SERVICES_ADS = "play-services-ads-22.2.0";
     public static String PLAY_SERVICES_ADS_BASE = "play-services-ads-base-22.2.0";
     public static String PLAY_SERVICES_ADS_IDENTIFIER = "play-services-ads-identifier-18.0.0";
@@ -430,6 +446,8 @@ public class BuiltInLibraries {
 
             new BuiltInLibrary(PATTERN_LOCK_VIEW, List.of(ANDROIDX_CORE, JETBRAINS_ANNOTATIONS), "com.andrognito.patternlockview"),
 
+            new BuiltInLibrary(UNITY_ADS, List.of(ANDROIDX_STARTUP_RUNTIME, ANDROIDX_LIFECYCLE_PROCESS)),
+
             new BuiltInLibrary(PLAY_SERVICES_ADS, List.of(ANDROIDX_BROWSER, ANDROIDX_COLLECTION_JVM, ANDROIDX_CORE, PLAY_SERVICES_ADS_BASE,
                     PLAY_SERVICES_ADS_IDENTIFIER, PLAY_SERVICES_ADS_LITE,
                     PLAY_SERVICES_APPSET, PLAY_SERVICES_BASEMENT, PLAY_SERVICES_TASKS), "com.google.android.gms.ads.impl"),
@@ -504,12 +522,156 @@ public class BuiltInLibraries {
         return getLibraryClassesJarPath(libraryName).getAbsolutePath();
     }
 
+    private static final Object UNITY_ADS_DEX_LOCK = new Object();
+
     public static File getLibraryDexFile(String libraryName) {
+        if (UNITY_ADS.equals(libraryName)) {
+            ensureUnityAdsDexFromBundledJar();
+        }
         return new File(EXTRACTED_BUILT_IN_LIBRARY_DEX_FILES_PATH, libraryName + ".dex");
     }
 
     public static String getLibraryDexFilePath(String libraryName) {
-        return new File(EXTRACTED_BUILT_IN_LIBRARY_DEX_FILES_PATH, libraryName + ".dex").getAbsolutePath();
+        return getLibraryDexFile(libraryName).getAbsolutePath();
+    }
+
+    /**
+     * The supplied Unity Ads 4.20.1 AAR contains classes.jar, not classes.dex.
+     * Sketchware Neo's internal builder consumes a separate DEX archive, so create
+     * the single library DEX with the same D8 implementation used by the app builder.
+     * The digest marker prevents redundant conversion and makes SDK changes invalidate it.
+     */
+    private static void ensureUnityAdsDexFromBundledJar() {
+        synchronized (UNITY_ADS_DEX_LOCK) {
+            File sdkDirectory = new File(EXTRACTED_BUILT_IN_LIBRARIES_PATH, UNITY_ADS);
+            File sdkJar = new File(sdkDirectory, "classes.jar");
+            if (!sdkJar.isFile() || sdkJar.length() == 0) {
+                // Leave normal missing-library handling to the existing library manager.
+                return;
+            }
+
+            File omSdkJar = new File(sdkDirectory, "libs/omsdk-android-1.4.9-release.jar");
+            if (!omSdkJar.isFile() || omSdkJar.length() == 0) {
+                throw new IllegalStateException("Unity Ads 4.20.1 assets are incomplete: OM SDK JAR is missing.");
+            }
+
+            File dexDirectory = EXTRACTED_BUILT_IN_LIBRARY_DEX_FILES_PATH;
+            if (!dexDirectory.isDirectory() && !dexDirectory.mkdirs()) {
+                throw new IllegalStateException("Could not create built-in DEX directory: " + dexDirectory.getAbsolutePath());
+            }
+            File targetDex = new File(dexDirectory, UNITY_ADS + ".dex");
+            File marker = new File(EXTRACTED_COMPILE_ASSETS_PATH, UNITY_ADS + ".dex.sha256");
+            File temporaryDex = new File(dexDirectory, UNITY_ADS + ".dex.tmp");
+            File temporaryOutput = new File(EXTRACTED_COMPILE_ASSETS_PATH, UNITY_ADS + "-dex-build");
+
+            try {
+                String inputDigest = sha256File(sdkJar) + ":" + sha256File(omSdkJar);
+                if (targetDex.isFile() && targetDex.length() > 0 && marker.isFile()
+                        && inputDigest.equals(readFirstLine(marker))) {
+                    return;
+                }
+
+                File androidJar = new File(EXTRACTED_COMPILE_ASSETS_PATH, "android.jar");
+                if (!androidJar.isFile() || androidJar.length() == 0) {
+                    maybeExtractAndroidJar();
+                }
+                if (!androidJar.isFile() || androidJar.length() == 0) {
+                    throw new IllegalStateException("Built-in android.jar is missing; cannot DEX Unity Ads 4.20.1.");
+                }
+
+                deleteRecursively(temporaryOutput);
+                if (!temporaryOutput.mkdirs()) {
+                    throw new IllegalStateException("Could not create temporary D8 directory: " + temporaryOutput.getAbsolutePath());
+                }
+
+                Collection<Path> programFiles = new ArrayList<>();
+                programFiles.add(sdkJar.toPath());
+                programFiles.add(omSdkJar.toPath());
+                Collection<Path> libraryFiles = new ArrayList<>();
+                libraryFiles.add(androidJar.toPath());
+
+                D8.run(D8Command.builder()
+                        .setMode(CompilationMode.RELEASE)
+                        .setIntermediate(false)
+                        .setMinApiLevel(19)
+                        .setDisableDesugaring(false)
+                        .addLibraryFiles(libraryFiles)
+                        .setOutput(temporaryOutput.toPath(), OutputMode.DexIndexed)
+                        .addProgramFiles(programFiles)
+                        .build());
+
+                File[] generatedDexFiles = temporaryOutput.listFiles((directory, name) -> name.matches("classes([0-9]+)?\\.dex"));
+                if (generatedDexFiles == null || generatedDexFiles.length != 1
+                        || !generatedDexFiles[0].isFile() || generatedDexFiles[0].length() == 0) {
+                    throw new IllegalStateException("D8 did not produce exactly one Unity Ads DEX file. Generated files: "
+                            + (generatedDexFiles == null ? "none" : generatedDexFiles.length));
+                }
+
+                copyFile(generatedDexFiles[0], temporaryDex);
+                if (targetDex.exists() && !targetDex.delete()) {
+                    throw new IllegalStateException("Could not replace the old Unity Ads DEX: " + targetDex.getAbsolutePath());
+                }
+                if (!temporaryDex.renameTo(targetDex)) {
+                    copyFile(temporaryDex, targetDex);
+                    if (!temporaryDex.delete()) temporaryDex.deleteOnExit();
+                }
+                if (!targetDex.isFile() || targetDex.length() == 0) {
+                    throw new IllegalStateException("Unity Ads 4.20.1 DEX output is empty after generation.");
+                }
+
+                try (FileOutputStream markerOutput = new FileOutputStream(marker, false)) {
+                    markerOutput.write(inputDigest.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            } catch (Exception e) {
+                throw new IllegalStateException("Unable to generate the Unity Ads 4.20.1 runtime DEX from its bundled JARs. "
+                        + "Verify the R8/D8 runtime dependency and the extracted SDK assets.", e);
+            } finally {
+                deleteRecursively(temporaryOutput);
+                if (temporaryDex.exists()) temporaryDex.delete();
+            }
+        }
+    }
+
+    private static String sha256File(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new FileInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, count);
+            }
+        }
+        StringBuilder value = new StringBuilder();
+        for (byte b : digest.digest()) value.append(String.format(java.util.Locale.ROOT, "%02x", b & 0xff));
+        return value.toString();
+    }
+
+    private static String readFirstLine(File file) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            return reader.readLine();
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static void copyFile(File source, File destination) throws IOException {
+        File parent = destination.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("Could not create directory: " + parent.getAbsolutePath());
+        }
+        try (InputStream input = new FileInputStream(source); OutputStream output = new FileOutputStream(destination, false)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.flush();
+        }
+    }
+
+    private static void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        File[] children = file.listFiles();
+        if (children != null) for (File child : children) deleteRecursively(child);
+        if (!file.delete()) file.deleteOnExit();
     }
 
     /**

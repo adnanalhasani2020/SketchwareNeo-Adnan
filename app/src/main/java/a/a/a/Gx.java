@@ -376,6 +376,10 @@ public class Gx {
                 classInfos = "Component.FirebaseGoogleLogin";
                 break;
 
+            case "UnityAds":
+                classInfos = "Component.UnityAds";
+                break;
+
             case "PopupMenu":
                 classInfos = "Component.PopupMenu";
                 break;

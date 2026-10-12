@@ -95,6 +95,9 @@ public class mq {
                     "PhoneAuthProvider.OnVerificationStateChangedCallbacks";
             case ComponentBean.COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE -> "FirebaseCloudMessage";
             case ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN -> "GoogleSignInClient";
+            // Unity Ads is a non-view built-in component. Without this mapping,
+            // generated source used an empty type and emitted `private unity;`.
+            case ComponentBean.COMPONENT_TYPE_UNITY_ADS -> "UnityAds";
             default -> ComponentsHandler.var(componentId);
         };
     }
@@ -638,6 +641,17 @@ public class mq {
                 importList.add("com.google.firebase.auth.GoogleAuthProvider");
                 return importList;
 
+            case "UnityAds":
+                importList.add("com.unity3d.ads.UnityAds");
+                importList.add("com.unity3d.ads.IUnityAdsInitializationListener");
+                importList.add("com.unity3d.ads.IUnityAdsLoadListener");
+                importList.add("com.unity3d.ads.IUnityAdsShowListener");
+                importList.add("com.unity3d.services.banners.BannerView");
+                importList.add("com.unity3d.services.banners.BannerErrorInfo");
+                importList.add("com.unity3d.services.banners.UnityBannerSize");
+                importList.add("android.view.ViewGroup");
+                return importList;
+
             case "RewardedVideoAd":
                 importList.add("com.google.android.gms.ads.AdError");
                 importList.add("com.google.android.gms.ads.MobileAds");
@@ -750,6 +764,22 @@ public class mq {
                 importList.add("com.google.android.gms.ads.OnUserEarnedRewardListener");
                 return importList;
 
+            case "unityAdsInitializationListener":
+                importList.add("com.unity3d.ads.IUnityAdsInitializationListener");
+                importList.add("com.unity3d.ads.UnityAds");
+                return importList;
+            case "unityAdsLoadListener":
+                importList.add("com.unity3d.ads.IUnityAdsLoadListener");
+                importList.add("com.unity3d.ads.UnityAds");
+                return importList;
+            case "unityAdsShowListener":
+                importList.add("com.unity3d.ads.IUnityAdsShowListener");
+                importList.add("com.unity3d.ads.UnityAds");
+                return importList;
+            case "unityBannerViewListener":
+                importList.add("com.unity3d.services.banners.BannerView");
+                importList.add("com.unity3d.services.banners.BannerErrorInfo");
+                return importList;
             case "rewardedAdLoadCallback":
                 importList.add("com.google.android.gms.ads.rewarded.RewardedAdLoadCallback");
                 return importList;

@@ -114,6 +114,10 @@ public class Lx {
             content.append("implementation 'com.google.android.gms:play-services-ads:23.4.0'\r\n");
         }
 
+        if (metadata.isUnityAdsEnabled) {
+            content.append("implementation 'com.unity3d.ads:unity-ads:4.20.1'\r\n");
+        }
+
         if (isLibraryNotExcluded(BuiltInLibraries.PLAY_SERVICES_MAPS, excludedLibraries) && metadata.isMapUsed) {
             content.append("implementation 'com.google.android.gms:play-services-maps:17.0.1'\r\n");
         }
@@ -174,6 +178,13 @@ public class Lx {
                 for (HashMap<String, Object> library : localLibraries) {
                     String dependency = (String) library.get("dependency");
                     if (dependency != null && !dependency.isEmpty()) {
+                        // Unity Ads is emitted once from metadata.isUnityAdsEnabled above.
+                        // Its local resolver entry remains available to Neo's internal DEX builder,
+                        // but must not duplicate the direct Maven coordinate in exported Gradle.
+                        if (metadata.isUnityAdsEnabled
+                                && dependency.matches("com\\.unity3d\\.ads:unity-ads:[^:]+")) {
+                            continue;
+                        }
                         dependency = "implementation '" + dependency + "'";
                         content.append(dependency).append("\r\n");
                     }
@@ -652,6 +663,15 @@ public class Lx {
                 case "InterstitialAd":
                     fieldDeclaration += "\r\nprivate InterstitialAdLoadCallback _" + typeInstanceName + "_interstitial_ad_load_callback;";
                     fieldDeclaration += "\r\nprivate FullScreenContentCallback _" + typeInstanceName + "_full_screen_content_callback;";
+                    break;
+
+                case "UnityAds":
+                    fieldDeclaration += "\r\nprivate IUnityAdsInitializationListener _" + typeInstanceName + "_initialization_listener;";
+                    fieldDeclaration += "\r\nprivate IUnityAdsLoadListener _" + typeInstanceName + "_load_listener;";
+                    fieldDeclaration += "\r\nprivate IUnityAdsShowListener _" + typeInstanceName + "_show_listener;";
+                    fieldDeclaration += "\r\nprivate BannerView _" + typeInstanceName + "_banner_view;";
+                    fieldDeclaration += "\r\nprivate BannerView.IListener _" + typeInstanceName + "_banner_listener;";
+                    fieldDeclaration += "\r\nprivate String _" + typeInstanceName + "_unity_placement_id = \"\";";
                     break;
 
                 case "RewardedVideoAd":
@@ -1637,6 +1657,7 @@ public class Lx {
                     "private FirebaseStorage _firebase_storage = FirebaseStorage.getInstance();";
             case "InterstitialAd" -> "private String _ad_unit_id;";
             case "RewardedVideoAd" -> "private String _reward_ad_unit_id;";
+            case "UnityAds" -> "private String _unity_game_id;\r\nprivate boolean _unity_test_mode = true;";
             default -> "";
         };
     }

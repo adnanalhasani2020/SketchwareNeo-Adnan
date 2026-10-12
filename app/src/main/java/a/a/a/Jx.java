@@ -166,6 +166,16 @@ public class Jx {
 
         if (buildConfig.isFirebaseEnabled) addImport("com.google.firebase.FirebaseApp");
 
+        if (buildConfig.isUnityAdsEnabled) {
+            addImport("com.unity3d.ads.UnityAds");
+            addImport("com.unity3d.ads.IUnityAdsInitializationListener");
+            addImport("com.unity3d.ads.IUnityAdsLoadListener");
+            addImport("com.unity3d.ads.IUnityAdsShowListener");
+            addImport("com.unity3d.services.banners.BannerView");
+            addImport("com.unity3d.services.banners.UnityBannerSize");
+            addImport("android.view.ViewGroup");
+        }
+
         if (buildConfig.isAdMobEnabled) {
             addImport("com.google.android.gms.ads.MobileAds");
 
@@ -380,6 +390,13 @@ public class Jx {
             }
 
             sb.append(EOL);
+        }
+
+        if (buildConfig.isUnityAdsEnabled && !isFragment
+                && fieldsWithStaticInitializers.contains(Lx.getComponentFieldCode("UnityAds"))) {
+            String unityId = buildConfig.unityGameId == null ? "" : buildConfig.unityGameId.replace("\\", "\\\\").replace("\"", "\\\"");
+            sb.append("_unity_game_id = \"").append(unityId).append("\";").append(EOL);
+            sb.append("_unity_test_mode = ").append(buildConfig.unityTestMode).append(";").append(EOL);
         }
 
         if (!isFragment) {
@@ -1058,6 +1075,10 @@ public class Jx {
 
                 case ComponentBean.COMPONENT_TYPE_REWARDED_VIDEO_AD:
                     hasRewardedVideoAd = true;
+                    break;
+
+                case ComponentBean.COMPONENT_TYPE_UNITY_ADS:
+                    fieldsWithStaticInitializers.add(Lx.getComponentFieldCode("UnityAds"));
                     break;
             }
         }

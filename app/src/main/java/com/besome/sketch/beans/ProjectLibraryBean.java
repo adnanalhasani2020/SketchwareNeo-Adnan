@@ -96,7 +96,7 @@ public class ProjectLibraryBean implements Parcelable {
         return switch (i) {
             case 0 -> R.drawable.ic_mtrl_firebase;
             case 1 -> R.drawable.ic_mtrl_design;
-            case 2 -> R.drawable.ic_mtrl_admob;
+            case 2 -> R.drawable.ic_mtrl_ads;
             case 3 -> R.drawable.ic_mtrl_map;
             case 4 -> R.drawable.ic_mtrl_box;
             case 5 -> R.drawable.ic_mtrl_settings_input;
@@ -122,7 +122,7 @@ public class ProjectLibraryBean implements Parcelable {
         return switch (i) {
             case 0 -> R.string.design_library_firebase_title_firebase;
             case 1 -> R.string.design_library_title_appcompat_and_design;
-            case 2 -> R.string.design_library_admob_title_admob;
+            case 2 -> R.string.design_library_ad_networks_title;
             case 3 -> R.string.design_library_google_map_title;
             case 4 -> R.string.text_title_menu_local_library;
             case 5 -> R.string.design_drawer_menu_nativelibs;
@@ -158,8 +158,47 @@ public class ProjectLibraryBean implements Parcelable {
         return 0;
     }
 
+    public static final String CONFIG_ADMOB_ENABLED = "admob_enabled";
+    public static final String CONFIG_UNITY_ENABLED = "unity_enabled";
+    public static final String CONFIG_UNITY_GAME_ID = "unity_game_id";
+    public static final String CONFIG_UNITY_TEST_MODE = "unity_test_mode";
+    public static final String CONFIG_UNITY_PLACEMENTS = "unity_placements";
+
     public boolean isEnabled() {
         return useYn != null && !useYn.isEmpty() && useYn.equals(LIB_USE_Y);
+    }
+
+    /** Returns the AdMob-specific state, preserving projects created before network settings existed. */
+    public boolean isAdMobEnabled() {
+        if (configurations != null && configurations.containsKey(CONFIG_ADMOB_ENABLED)) {
+            return asBoolean(configurations.get(CONFIG_ADMOB_ENABLED), false);
+        }
+        return PROJECT_LIB_TYPE_ADMOB == libType && LIB_USE_Y.equals(useYn);
+    }
+
+    public boolean isUnityAdsEnabled() {
+        return configurations != null && asBoolean(configurations.get(CONFIG_UNITY_ENABLED), false);
+    }
+
+    public String getConfigurationString(String key, String fallback) {
+        if (configurations == null) return fallback;
+        Object value = configurations.get(key);
+        return value == null ? fallback : String.valueOf(value);
+    }
+
+    public void setConfiguration(String key, Object value) {
+        if (configurations == null) configurations = new HashMap<>();
+        if (value == null) configurations.remove(key);
+        else configurations.put(key, value);
+    }
+
+    private static boolean asBoolean(Object value, boolean fallback) {
+        if (value instanceof Boolean) return (Boolean) value;
+        if (value == null) return fallback;
+        String text = String.valueOf(value);
+        if ("true".equalsIgnoreCase(text) || "Y".equalsIgnoreCase(text) || "1".equals(text)) return true;
+        if ("false".equalsIgnoreCase(text) || "N".equalsIgnoreCase(text) || "0".equals(text)) return false;
+        return fallback;
     }
 
     public void print() {

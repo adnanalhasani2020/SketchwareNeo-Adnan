@@ -11,6 +11,8 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.besome.sketch.beans.ComponentBean;
 import com.besome.sketch.beans.ProjectFileBean;
+import com.besome.sketch.beans.ProjectLibraryBean;
+import a.a.a.jC;
 import com.google.android.flexbox.AlignItems;
 import com.google.android.flexbox.FlexDirection;
 import com.google.android.flexbox.FlexWrap;
@@ -84,6 +86,16 @@ public class AddComponentBottomSheet extends BottomSheetDialogFragment {
         // Ads
         componentList.add(new ComponentBean(ComponentBean.COMPONENT_TYPE_INTERSTITIAL_AD));
         componentList.add(new ComponentBean(ComponentBean.COMPONENT_TYPE_REWARDED_VIDEO_AD));
+
+        // Unity Ads is only offered as a built-in component when enabled in Ad Networks.
+        try {
+            ProjectLibraryBean networkSettings = jC.c(sc_id).b();
+            if (networkSettings != null && networkSettings.isUnityAdsEnabled()) {
+                componentList.add(new ComponentBean(ComponentBean.COMPONENT_TYPE_UNITY_ADS));
+            }
+        } catch (RuntimeException ignored) {
+            // Keep the normal component picker usable if library settings cannot be read.
+        }
 
         // Firebase
         componentList.add(new ComponentBean(ComponentBean.COMPONENT_TYPE_FIREBASE));

@@ -43,6 +43,7 @@ public final class DuplicateClassGuard {
             if (match != null) builtIns.addAll(BuiltInArtifacts.closure(match.libraryName));
         }
         for (String name : builtIns) {
+            if (BuiltInArtifacts.isSupersededByNewerLocalArtifact(scId, name)) continue;
             File jar = BuiltInLibraries.getLibraryClassesJarPath(name);
             if (jar.isFile()) jars.put("built-in:" + name, jar);
         }

@@ -228,7 +228,7 @@ public class Ix {
                 new Pair<>(builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_WORK_RUNTIME), "androidx.work.WorkManagerInitializer")
         );
 
-        if (initializers.stream().anyMatch(initializer -> initializer.first)) {
+        if (initializers.stream().anyMatch(initializer -> initializer.first) || c.isUnityAdsEnabled) {
             XmlBuilder initializationProvider = new XmlBuilder("provider");
             initializationProvider.addAttribute("android", "name", "androidx.startup.InitializationProvider");
             initializationProvider.addAttribute("android", "authorities", c.packageName + ".androidx-startup");
@@ -241,6 +241,12 @@ public class Ix {
                     initializationProvider.addChildNode(metadata);
                 }
             }
+            if (c.isUnityAdsEnabled) {
+                XmlBuilder unityInitializer = new XmlBuilder("meta-data");
+                unityInitializer.addAttribute("android", "name", "com.unity3d.services.core.configuration.AdsSdkInitializer");
+                unityInitializer.addAttribute("android", "value", "androidx.startup");
+                initializationProvider.addChildNode(unityInitializer);
+            }
             application.addChildNode(initializationProvider);
         }
     }
@@ -249,14 +255,14 @@ public class Ix {
         XmlBuilder alarmService = new XmlBuilder("service");
         alarmService.addAttribute("android", "name", "androidx.work.impl.background.systemalarm.SystemAlarmService");
         alarmService.addAttribute("android", "directBootAware", "false");
-        alarmService.addAttribute("android", "enabled", "@bool/enable_system_alarm_service_default");
+        alarmService.addAttribute("android", "enabled", "true");
         alarmService.addAttribute("android", "exported", "false");
         application.addChildNode(alarmService);
 
         XmlBuilder jobService = new XmlBuilder("service");
         jobService.addAttribute("android", "name", "androidx.work.impl.background.systemjob.SystemJobService");
         jobService.addAttribute("android", "directBootAware", "false");
-        jobService.addAttribute("android", "enabled", "@bool/enable_system_job_service_default");
+        jobService.addAttribute("android", "enabled", "true");
         jobService.addAttribute("android", "exported", "true");
         jobService.addAttribute("android", "permission", "android.permission.BIND_JOB_SERVICE");
         application.addChildNode(jobService);
@@ -264,7 +270,7 @@ public class Ix {
         XmlBuilder foregroundService = new XmlBuilder("service");
         foregroundService.addAttribute("android", "name", "androidx.work.impl.foreground.SystemForegroundService");
         foregroundService.addAttribute("android", "directBootAware", "false");
-        foregroundService.addAttribute("android", "enabled", "@bool/enable_system_foreground_service_default");
+        foregroundService.addAttribute("android", "enabled", "true");
         foregroundService.addAttribute("android", "exported", "false");
         application.addChildNode(foregroundService);
 
@@ -363,7 +369,7 @@ public class Ix {
         XmlBuilder proxyUpdateReceiver = new XmlBuilder("receiver");
         proxyUpdateReceiver.addAttribute("android", "name", "androidx.work.impl.background.systemalarm.ConstraintProxyUpdateReceiver");
         proxyUpdateReceiver.addAttribute("android", "directBootAware", "false");
-        proxyUpdateReceiver.addAttribute("android", "enabled", "@bool/enable_system_alarm_service_default");
+        proxyUpdateReceiver.addAttribute("android", "enabled", "true");
         proxyUpdateReceiver.addAttribute("android", "exported", "false");
         {
             XmlBuilder intentFilter = new XmlBuilder("intent-filter");
@@ -455,6 +461,16 @@ public class Ix {
         if (c.isAdMobEnabled) {
             writePermission(a, "com.google.android.gms.permission.AD_ID");
         }
+        if (c.isUnityAdsEnabled) {
+            writePermission(a, "com.google.android.gms.permission.AD_ID");
+            writePermission(a, "android.permission.ACCESS_NETWORK_STATE");
+            writePermission(a, "android.permission.INTERNET");
+            // Match the Unity Ads 4.20.1 AAR manifest. These permissions are declared
+            // by the SDK regardless of targetSdkVersion; do not silently drop them when
+            // generating a manifest without Android's normal AAR manifest merger.
+            writePermission(a, "android.permission.ACCESS_ADSERVICES_TOPICS");
+            writePermission(a, "android.permission.ACCESS_ADSERVICES_ATTRIBUTION");
+        }
         if (builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_WORK_RUNTIME)) {
             writePermission(a, "android.permission.WAKE_LOCK");
             writePermission(a, "android.permission.ACCESS_NETWORK_STATE");
@@ -473,7 +489,7 @@ public class Ix {
         
         AndroidManifestInjector.getP(a, c.sc_id);
 
-        if (c.isAdMobEnabled || c.isTextToSpeechUsed || c.isSpeechToTextUsed) {
+        if (c.isAdMobEnabled || c.isUnityAdsEnabled || c.isTextToSpeechUsed || c.isSpeechToTextUsed) {
             XmlBuilder queries = new XmlBuilder("queries");
             if (c.isAdMobEnabled) {
                 XmlBuilder forBrowserContent = new XmlBuilder("intent");
@@ -510,6 +526,24 @@ public class Ix {
                 action.addAttribute("android", "name", "android.speech.RecognitionService");
                 intent.addChildNode(action);
                 queries.addChildNode(intent);
+            }
+            if (c.isUnityAdsEnabled) {
+                // Unity Ads 4.21.0 manifest queries this attribution referral action on Android 11+.
+                XmlBuilder referralIntent = new XmlBuilder("intent");
+                XmlBuilder referralAction = new XmlBuilder("action");
+                referralAction.addAttribute("android", "name", "com.attribution.REFERRAL_PROVIDER");
+                referralIntent.addChildNode(referralAction);
+                queries.addChildNode(referralIntent);
+                String[] unityStorePackages = {
+                        "com.android.vending", "com.google.market", "com.amazon.venezia",
+                        "com.sec.android.app.samsungapps", "com.xiaomi.market",
+                        "com.huawei.appmarket", "com.oppo.market", "com.bbk.appstore"
+                };
+                for (String packageName : unityStorePackages) {
+                    XmlBuilder packageTag = new XmlBuilder("package");
+                    packageTag.addAttribute("android", "name", packageName);
+                    queries.addChildNode(packageTag);
+                }
             }
             a.addChildNode(queries);
         }
@@ -642,6 +676,18 @@ public class Ix {
             testingActivity.addAttribute("android", "configChanges", "keyboard|keyboardHidden|orientation|screenLayout|uiMode|screenSize|smallestScreenSize");
             testingActivity.addAttribute("android", "exported", "false");
             applicationTag.addChildNode(testingActivity);
+        }
+        if (c.isUnityAdsEnabled) {
+            // Unity Ads 4.20.1's bundled AAR declares FullScreenWebViewDisplay only.
+            // Do not emit obsolete AdUnitActivity class names from older SDK versions.
+            XmlBuilder unityActivity = new XmlBuilder("activity");
+            unityActivity.addAttribute("android", "name", "com.unity3d.ads.adplayer.FullScreenWebViewDisplay");
+            unityActivity.addAttribute("android", "configChanges", "fontScale|keyboard|keyboardHidden|locale|mnc|mcc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|touchscreen");
+            unityActivity.addAttribute("android", "enableOnBackInvokedCallback", "false");
+            unityActivity.addAttribute("android", "exported", "false");
+            unityActivity.addAttribute("android", "hardwareAccelerated", "true");
+            unityActivity.addAttribute("android", "theme", "@android:style/Theme.NoTitleBar.Fullscreen");
+            applicationTag.addChildNode(unityActivity);
         }
         if (builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_ROOM_RUNTIME)) {
             writeAndroidxRoomService(applicationTag);

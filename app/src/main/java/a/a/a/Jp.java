@@ -17,8 +17,11 @@ public class Jp {
     public Jp(String libraryName) {
         name = libraryName;
         hasResources = BuiltInLibraryUtils.hasResources(libraryName);
-        hasAssets = libraryName.equals(BuiltInLibraries.CODEVIEW);
-        if (hasResources || hasAssets) {
+        hasAssets = libraryName.equals(BuiltInLibraries.CODEVIEW)
+                || libraryName.equals(BuiltInLibraries.UNITY_ADS);
+        // Assets-only libraries do not need an R namespace. Resolve a package only
+        // when a library actually contributes Android resources.
+        if (hasResources) {
             packageName = BuiltInLibraryUtils.getPackageName(libraryName);
         } else {
             packageName = "";

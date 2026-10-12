@@ -312,6 +312,13 @@ public class oq {
             eventList.add("fullScreenContentCallback");
         }
 
+        if (classInfo.a("UnityAds")) {
+            eventList.add("unityAdsInitializationListener");
+            eventList.add("unityAdsLoadListener");
+            eventList.add("unityAdsShowListener");
+            eventList.add("unityBannerViewListener");
+        }
+
         if (classInfo.a("AdView")) {
             eventList.add("bannerAdViewListener");
         }
@@ -395,6 +402,27 @@ public class oq {
             case "interstitialAdLoadCallback" -> {
                 eventList.add("onInterstitialAdLoaded");
                 eventList.add("onInterstitialAdFailedToLoad");
+            }
+            case "unityAdsInitializationListener" -> {
+                eventList.add("onUnityAdsInitialized");
+                eventList.add("onUnityAdsFailedToInitialize");
+            }
+            case "unityAdsLoadListener" -> {
+                eventList.add("onUnityAdsAdLoaded");
+                eventList.add("onUnityAdsFailedToLoad");
+            }
+            case "unityAdsShowListener" -> {
+                eventList.add("onUnityAdsShowComplete");
+                eventList.add("onUnityAdsShowFailure");
+                eventList.add("onUnityAdsShowStart");
+                eventList.add("onUnityAdsShowClick");
+            }
+            case "unityBannerViewListener" -> {
+                eventList.add("onUnityBannerLoaded");
+                eventList.add("onUnityBannerShown");
+                eventList.add("onUnityBannerFailedToLoad");
+                eventList.add("onUnityBannerClick");
+                eventList.add("onUnityBannerLeftApplication");
             }
             case "fullScreenContentCallback" -> {
                 eventList.add("onAdDismissedFullScreenContent");

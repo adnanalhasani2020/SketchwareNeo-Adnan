@@ -327,6 +327,18 @@ public final class GradleSyncEngine {
     @NonNull
     public static Result sync(Context context, String scId, List<GradleDependency> deps, @Nullable Set<String> onlyKeys,
                               String appGradleContent, Listener listener, AtomicBoolean cancel) {
+        return sync(context, scId, deps, onlyKeys, appGradleContent, listener, cancel, false);
+    }
+
+    /**
+     * Syncs selected direct coordinates while still reconciling the full declared dependency set.
+     * When verifyOnlyTargets is true, unrelated unsynced declarations do not make a targeted
+     * SDK preparation fail; failures in the selected coordinate still fail the operation.
+     */
+    @NonNull
+    public static Result sync(Context context, String scId, List<GradleDependency> deps, @Nullable Set<String> onlyKeys,
+                              String appGradleContent, Listener listener, AtomicBoolean cancel,
+                              boolean verifyOnlyTargets) {
         BuildSettings buildSettings = new BuildSettings(scId);
         boolean useCache = buildSettings.isOfflineCacheEnabled();
         List<GradleDependency> targets = new ArrayList<>();
@@ -441,7 +453,21 @@ public final class GradleSyncEngine {
         }
 
         listener.onStatus("Verifying", done, total);
-        for (String line : reconcile(scId, deps)) listener.onLog(line);
+        if (verifyOnlyTargets && !hasEnabledCustomGradleFile(scId)) {
+            // The Unity Ads screen performs a targeted sync, not a full Custom Gradle sync.
+            // Do not reconcile the project's entire dependency store against a one-item list:
+            // that would discard skip flags/superseded state for unrelated previously synced deps.
+            Store current = loadStore(scId);
+            for (GradleDependency target : deps) {
+                if (onlyKeys != null && !onlyKeys.contains(target.key())) continue;
+                List<String> targetFolders = current.folders.get(target.coordinate());
+                if (targetFolders != null && !targetFolders.isEmpty()) {
+                    enableFolders(scId, targetFolders, target.coordinate());
+                }
+            }
+        } else {
+            for (String line : reconcile(scId, deps)) listener.onLog(line);
+        }
         String overlap = DuplicateClassGuard.find(scId, deps);
         if (overlap != null) {
             listener.onLog("error: " + overlap);
@@ -449,15 +475,25 @@ public final class GradleSyncEngine {
         }
         List<Row> finalRows = inspect(scId, deps);
         int notReady = 0;
+        int unrelatedNotReady = 0;
         for (Row row : finalRows) {
-            if (row.isConsumed() && row.state != DepState.READY) notReady++;
+            boolean isSelectedTarget = onlyKeys == null || onlyKeys.contains(row.dep.key());
+            if (row.isConsumed() && row.state != DepState.READY) {
+                if (verifyOnlyTargets && !isSelectedTarget) unrelatedNotReady++;
+                else notReady++;
+            }
         }
         boolean success = failures == 0 && notReady == 0;
         String message;
         String status;
         if (success) {
-            message = "All " + countConsumed(finalRows) + " dependencies verified";
-            status = "SUCCESS";
+            if (verifyOnlyTargets) {
+                message = "Selected dependency and its resolved dependencies verified";
+                status = unrelatedNotReady == 0 ? "SUCCESS" : "PARTIAL";
+            } else {
+                message = "All " + countConsumed(finalRows) + " dependencies verified";
+                status = "SUCCESS";
+            }
         } else if (overlap != null) {
             message = overlap.split("\n")[1].trim();
             status = "FAILED";
@@ -471,12 +507,22 @@ public final class GradleSyncEngine {
         }
         String finalMessage = message;
         String appHash = hash(appGradleContent);
-        updateStore(scId, store -> {
-            store.time = System.currentTimeMillis();
-            store.appHash = appHash;
-            store.status = status;
-            store.message = finalMessage;
-        });
+        if (verifyOnlyTargets) {
+            // This was an SDK-only sync; do not mark the whole project's dependency set as
+            // fully synced or replace the hash for the user's complete Custom Gradle file.
+            updateStore(scId, store -> {
+                store.time = System.currentTimeMillis();
+                store.status = success ? "PARTIAL" : "FAILED";
+                store.message = "Targeted dependency sync: " + finalMessage;
+            });
+        } else {
+            updateStore(scId, store -> {
+                store.time = System.currentTimeMillis();
+                store.appHash = appHash;
+                store.status = status;
+                store.message = finalMessage;
+            });
+        }
         listener.onLog(success ? "Sync finished: " + message : "Sync failed: " + message);
         return new Result(success, false, !success && offlineFailure, message);
     }
@@ -721,6 +767,13 @@ public final class GradleSyncEngine {
         ArrayList<HashMap<String, Object>> enabled = LocalLibrariesUtil.getLocalLibraries(scId);
         boolean changed = enabled.removeIf(map -> map.get("name") != null && stale.contains(map.get("name").toString()));
         if (changed) LocalLibrariesUtil.rewriteLocalLibFile(scId, new Gson().toJson(enabled));
+    }
+
+    private static boolean hasEnabledCustomGradleFile(String scId) {
+        if (!CustomGradleBuildManager.isEnabled(scId)) return false;
+        File appGradle = new File(CustomGradleBuildManager.getDirectory(scId),
+                CustomGradleBuildManager.FILE_APP_BUILD);
+        return appGradle.isFile();
     }
 
     private static String resolverVersion(GradleDependency dep) {

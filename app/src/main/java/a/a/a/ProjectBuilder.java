@@ -72,6 +72,7 @@ import mod.jbk.util.TestkeySignBridge;
 import mod.pranav.build.JarBuilder;
 import mod.pranav.viewbinding.ViewBindingBuilder;
 import pro.sketchware.SketchApplication;
+import pro.sketchware.activities.editor.gradle.UnityAdsDependencyManager;
 import pro.sketchware.util.library.BuiltInLibraryManager;
 import pro.sketchware.utility.FilePathUtil;
 import mod.hey.studios.activity.managers.cpp.CppExporter;
@@ -808,13 +809,24 @@ public class ProjectBuilder {
         if (yq.N.isAdMobEnabled) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.PLAY_SERVICES_ADS);
         }
+        if (yq.N.isUnityAdsEnabled) {
+            // The Unity SDK root stays in Neo's bundled libs.zip. Missing transitives are
+            // prepared by the background build task, never when settings are saved.
+            builtInLibraryManager.addLibrary(BuiltInLibraries.UNITY_ADS);
+            for (String libraryName : UnityAdsDependencyManager.getProvidedBuiltInLibraries(yq.sc_id)) {
+                builtInLibraryManager.addLibrary(libraryName);
+            }
+        }
         if (yq.N.isGsonUsed) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.GSON);
         }
         if (yq.N.isGlideUsed) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.GLIDE);
         }
-        if (yq.N.isHttp3Used) {
+        // Unity Ads 4.20.1 requires OkHttp 3.x. Do not also bundle Neo's OkHttp 5.x
+        // when both the Unity SDK and HTTP/3 helper are used; use the resolved compatible
+        // OkHttp dependency from Unity's graph for this build.
+        if (yq.N.isHttp3Used && !yq.N.isUnityAdsEnabled) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.OKHTTP_ANDROID);
         }
 

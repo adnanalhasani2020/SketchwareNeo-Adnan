@@ -22,8 +22,8 @@
         <ImageView
             android:id="@+id/lib_icon"
             android:layout_width="24dp"
-            android:layout_height="wrap_content"
-            android:adjustViewBounds="true"
+            android:layout_height="24dp"
+            android:adjustViewBounds="false"
             app:tint="?attr/colorOnSurfaceVariant"
             tools:src="@drawable/ic_mtrl_component" />
 

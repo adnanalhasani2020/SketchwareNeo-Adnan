@@ -902,7 +902,7 @@ public class ExtraPaletteBlock {
             {
                 boolean signInButtonUsed = isWidgetUsed("SignInButton");
                 boolean youtubePlayerViewUsed = isWidgetUsed("YoutubePlayerView");
-                boolean adMobUsed = "Y".equals(jC.c(sc_id).b().useYn);
+                boolean adMobUsed = jC.c(sc_id).b().isAdMobEnabled();
                 boolean mapViewUsed = isWidgetUsed("MapView");
 
                 if (signInButtonUsed || youtubePlayerViewUsed || adMobUsed || mapViewUsed) {
@@ -1121,6 +1121,21 @@ public class ExtraPaletteBlock {
                     logicEditor.a(" ", "interstitialAdLoad");
                     logicEditor.a(" ", "interstitialAdShow");
                     logicEditor.a("b", "interstitialAdIsLoaded");
+                }
+                if (extraBlocks.isComponentUsed(ComponentBean.COMPONENT_TYPE_UNITY_ADS)) {
+                    logicEditor.a("Unity Ads", getTitleBgColor());
+                    logicEditor.a(" ", "unityAdsInitializeFromManager");
+                    logicEditor.a(" ", "unityAdsInitializeWithGameId");
+                    logicEditor.a(" ", "unityAdsSetActivePlacement");
+                    logicEditor.a("s", "unityAdsGetActivePlacement");
+                    logicEditor.a("s", "unityAdsConfiguredPlacement");
+                    logicEditor.a(" ", "unityAdsLoadPlacement");
+                    logicEditor.a(" ", "unityAdsLoadActivePlacement");
+                    logicEditor.a(" ", "unityAdsShowPlacement");
+                    logicEditor.a(" ", "unityAdsShowActivePlacement");
+                    logicEditor.a("b", "unityAdsIsInitialized");
+                    logicEditor.a(" ", "unityAdsLoadBanner");
+                    logicEditor.a(" ", "unityAdsDestroyBanner");
                 }
                 if (extraBlocks.isComponentUsed(ComponentBean.COMPONENT_TYPE_REWARDED_VIDEO_AD)) {
                     logicEditor.a("RewardedVideoAd", getTitleBgColor());

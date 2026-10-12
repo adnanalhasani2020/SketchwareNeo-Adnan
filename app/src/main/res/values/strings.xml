@@ -1052,6 +1052,7 @@ ex)\"*/*\", \"image/*\", \"audio/*\", \"text/*\""</string>
     <string name="component_description_gyrosope">"The gyroscope measures the rate of rotation in rad/s around a device's x, y, and z axis."</string>
     <string name="component_description_intent">Intent is used to start a new Activity</string>
     <string name="component_description_interstitial_ad">Interstitial Ad lets you add fullscreen advertisements.</string>
+    <string name="component_description_unity_ads">Unity Ads lets you initialize the Unity Ads SDK, load and show placements, and display banner ads.</string>
     <string name="component_description_location_manager">LocationManager is used to load a data of the current location</string>
     <string name="component_description_mediaplayer">MediaPlayer is used to play big sound files</string>
     <string name="component_description_objectanimator">ObjectAnimator is used to animate certain properties of a View</string>
@@ -1146,6 +1147,7 @@ ex)\"*/*\", \"image/*\", \"audio/*\", \"text/*\""</string>
     <string name="design_library_admob_setting_step5_title">Review Information</string>
     <string name="design_library_admob_title_ad_name">Ad Name</string>
     <string name="design_library_admob_title_ad_unit_id">Ad Unit ID</string>
+    <string name="design_library_ad_networks_title">Ad Networks</string>
     <string name="design_library_admob_title_admob">AdMob</string>
     <string name="design_library_admob_title_admob_manager">AdMob Manager</string>
     <string name="design_library_admob_title_app_id">App ID</string>
@@ -1165,7 +1167,7 @@ Choosing a theme mode lets you personalize the app\'s appearance, notes:\n
     <string name="design_library_appcompat_need_firebase_disable">You can not disable the AppCompat Library when Firebase is in use.</string>
     <string name="design_library_appcompat_need_m3_disable">You can not disable the AppCompat Library when Material3 and Dynamic Colors is in use.</string>
     <string name="design_library_button_import_from_other_project">Import from the other project</string>
-    <string name="design_library_description_admob">Use Google AdMob</string>
+    <string name="design_library_description_admob">Manage Google AdMob and Unity Ads</string>
     <string name="design_library_description_appcompat_and_design">Drawer Layout, Floating Action Button</string>
     <string name="design_library_description_firebase">Use Firebase Database and Authentication</string>
     <string name="design_library_description_google_map">Use Google Map</string>

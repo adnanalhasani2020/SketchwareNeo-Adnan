@@ -45,11 +45,39 @@ public class LibraryItemView extends FrameLayout {
         boolean enabledChecked = ProjectLibraryBean.LIB_USE_Y.equals(projectLibraryBean.useYn);
         CharSequence enabledLabel = enabledChecked ? "ON" : "OFF";
 
-        icon.setImageResource(ProjectLibraryBean.getLibraryIcon(projectLibraryBean.libType));
+        int iconResource = ProjectLibraryBean.getLibraryIcon(projectLibraryBean.libType);
+        // The AdMob library entry now represents the combined Ad Networks feature.
+        // Resolve its icon explicitly and apply the Neo theme tint so it remains visible
+        // even when drawable and ImageView tint sources differ across theme variants.
+        if (projectLibraryBean.libType == ProjectLibraryBean.PROJECT_LIB_TYPE_ADMOB) {
+            iconResource = R.drawable.ic_mtrl_ads;
+        }
+        if (iconResource != 0) {
+            icon.setImageResource(iconResource);
+            icon.setVisibility(View.VISIBLE);
+            icon.setAlpha(1f);
+            icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            ViewGroup.LayoutParams iconParams = icon.getLayoutParams();
+            if (iconParams != null) {
+                iconParams.width = dp(24);
+                iconParams.height = dp(24);
+                icon.setLayoutParams(iconParams);
+            }
+            icon.setColorFilter(ThemeUtils.getColor(context, R.attr.colorOnSurfaceVariant));
+            int titleResource = ProjectLibraryBean.getLibraryResName(projectLibraryBean.libType);
+            icon.setContentDescription(titleResource != 0 ? context.getString(titleResource) : "Library icon");
+        } else {
+            icon.setImageDrawable(null);
+            icon.setVisibility(View.INVISIBLE);
+        }
         title.setText(ProjectLibraryBean.getLibraryResName(projectLibraryBean.libType));
         description.setText(ProjectLibraryBean.getLibraryResDesc(projectLibraryBean.libType));
         enabled.setText(enabledLabel);
         enabled.setSelected(enabledChecked);
+    }
+
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     public void setHideEnabled() {

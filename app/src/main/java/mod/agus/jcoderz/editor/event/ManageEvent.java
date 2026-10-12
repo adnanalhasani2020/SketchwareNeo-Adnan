@@ -344,6 +344,19 @@ public class ManageEvent {
             case "onCompleteRegister" -> R.drawable.ic_mtrl_user_register_complete;
             case "onUpdatePasswordComplete" -> R.drawable.ic_mtrl_password;
             case "onUserEarnedReward" -> R.drawable.ic_mtrl_payment;
+            case "onUnityAdsInitialized" -> R.drawable.ic_mtrl_unity_ads_initialized;
+            case "onUnityAdsFailedToInitialize" -> R.drawable.ic_mtrl_unity_ads_failed_to_initialize;
+            case "onUnityAdsAdLoaded" -> R.drawable.ic_mtrl_unity_ads_ad_loaded;
+            case "onUnityAdsFailedToLoad" -> R.drawable.ic_mtrl_unity_ads_failed_to_load;
+            case "onUnityAdsShowComplete" -> R.drawable.ic_mtrl_unity_ads_show_complete;
+            case "onUnityAdsShowFailure" -> R.drawable.ic_mtrl_unity_ads_show_failure;
+            case "onUnityAdsShowStart" -> R.drawable.ic_mtrl_unity_ads_show_start;
+            case "onUnityAdsShowClick" -> R.drawable.ic_mtrl_unity_ads_show_click;
+            case "onUnityBannerLoaded" -> R.drawable.ic_mtrl_unity_banner_loaded;
+            case "onUnityBannerShown" -> R.drawable.ic_mtrl_unity_banner_shown;
+            case "onUnityBannerFailedToLoad" -> R.drawable.ic_mtrl_unity_banner_failed_to_load;
+            case "onUnityBannerClick" -> R.drawable.ic_mtrl_unity_banner_click;
+            case "onUnityBannerLeftApplication" -> R.drawable.ic_mtrl_unity_banner_left_application;
             default -> EventsHandler.getIcon(str);
         };
     }
@@ -384,7 +397,14 @@ public class ManageEvent {
                  "onTabUnselected", "onPageSelected", "onPrepared", "onQueryTextSubmit",
                  "onCodeSent", "onTimeChanged", "onUpdatePasswordComplete",
                  "onAdDismissedFullScreenContent", "onAdFailedToShowFullScreenContent",
-                 "onAdShowedFullScreenContent", "onUserEarnedReward" -> eventName;
+                 "onAdShowedFullScreenContent", "onUserEarnedReward",
+                 "onUnityAdsInitialized", "onUnityAdsFailedToInitialize",
+                 "onUnityAdsAdLoaded", "onUnityAdsFailedToLoad",
+                 "onUnityAdsShowComplete", "onUnityAdsShowFailure",
+                 "onUnityAdsShowStart", "onUnityAdsShowClick",
+                 "onUnityBannerLoaded", "onUnityBannerShown",
+                 "onUnityBannerFailedToLoad", "onUnityBannerClick",
+                 "onUnityBannerLeftApplication" -> eventName;
             default -> EventsHandler.getDesc(eventName);
         };
     }
@@ -612,6 +632,19 @@ public class ManageEvent {
                     "final String _errorMessage = _param1.getMessage();\r\n" +
                     eventLogic + "\r\n" +
                     "}";
+            case "onUnityAdsInitialized" -> "@Override\r\npublic void onInitializationComplete() {\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsFailedToInitialize" -> "@Override\r\npublic void onInitializationFailed(UnityAds.UnityAdsInitializationError _error, String _message) {\r\nfinal String _errorCode = _error == null ? \"\" : _error.name();\r\nfinal String _errorMessage = _message == null ? \"\" : _message;\r\nandroid.util.Log.e(\"UnityAds\", \"Initialization failed [\" + _errorCode + \"] \" + _errorMessage);\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsAdLoaded" -> "@Override\r\npublic void onUnityAdsAdLoaded(String _placementId) {\r\nfinal String _unityPlacementId = _placementId;\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsFailedToLoad" -> "@Override\r\npublic void onUnityAdsFailedToLoad(String _placementId, UnityAds.UnityAdsLoadError _error, String _message) {\r\nfinal String _unityPlacementId = _placementId;\r\nfinal String _errorCode = _error == null ? \"\" : _error.name();\r\nfinal String _errorMessage = _message == null ? \"\" : _message;\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsShowComplete" -> "@Override\r\npublic void onUnityAdsShowComplete(String _placementId, UnityAds.UnityAdsShowCompletionState _state) {\r\nfinal String _unityPlacementId = _placementId;\r\nfinal String _completionState = _state == null ? \"\" : _state.name();\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsShowFailure" -> "@Override\r\npublic void onUnityAdsShowFailure(String _placementId, UnityAds.UnityAdsShowError _error, String _message) {\r\nfinal String _unityPlacementId = _placementId;\r\nfinal String _errorCode = _error == null ? \"\" : _error.name();\r\nfinal String _errorMessage = _message == null ? \"\" : _message;\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsShowStart" -> "@Override\r\npublic void onUnityAdsShowStart(String _placementId) {\r\nfinal String _unityPlacementId = _placementId;\r\n" + eventLogic + "\r\n}";
+            case "onUnityAdsShowClick" -> "@Override\r\npublic void onUnityAdsShowClick(String _placementId) {\r\nfinal String _unityPlacementId = _placementId;\r\n" + eventLogic + "\r\n}";
+            case "onUnityBannerLoaded" -> "@Override\r\npublic void onBannerLoaded(BannerView _bannerView) {\r\n" + eventLogic + "\r\n}";
+            case "onUnityBannerShown" -> "@Override\r\npublic void onBannerShown(BannerView _bannerView) {\r\n" + eventLogic + "\r\n}";
+            case "onUnityBannerFailedToLoad" -> "@Override\r\npublic void onBannerFailedToLoad(BannerView _bannerView, BannerErrorInfo _errorInfo) {\r\nfinal String _errorCode = _errorInfo == null || _errorInfo.errorCode == null ? \"\" : _errorInfo.errorCode.name();\r\nfinal String _errorMessage = _errorInfo == null ? \"\" : _errorInfo.errorMessage;\r\n" + eventLogic + "\r\n}";
+            case "onUnityBannerClick" -> "@Override\r\npublic void onBannerClick(BannerView _bannerView) {\r\n" + eventLogic + "\r\n}";
+            case "onUnityBannerLeftApplication" -> "@Override\r\npublic void onBannerLeftApplication(BannerView _bannerView) {\r\n" + eventLogic + "\r\n}";
             case "onAdDismissedFullScreenContent" -> {
                 code = resetInterstitialAd;
                 yield "@Override\r\n" +
@@ -828,6 +861,14 @@ public class ManageEvent {
                     "_" + targetId + "_rewarded_ad_load_callback = new RewardedAdLoadCallback() {\r\n" +
                             listenerLogic + "\r\n" +
                             "};";
+            case "unityAdsInitializationListener" ->
+                    "_" + targetId + "_initialization_listener = new IUnityAdsInitializationListener() {\r\n" + listenerLogic + "\r\n};";
+            case "unityAdsLoadListener" ->
+                    "_" + targetId + "_load_listener = new IUnityAdsLoadListener() {\r\n" + listenerLogic + "\r\n};";
+            case "unityAdsShowListener" ->
+                    "_" + targetId + "_show_listener = new IUnityAdsShowListener() {\r\n" + listenerLogic + "\r\n};";
+            case "unityBannerViewListener" ->
+                    "_" + targetId + "_banner_listener = new BannerView.Listener() {\r\n" + listenerLogic + "\r\n};";
             case "onUserEarnedRewardListener" ->
                     "_" + targetId + "_on_user_earned_reward_listener = new OnUserEarnedRewardListener() {\r\n" +
                             "@Override\r\npublic void onUserEarnedReward(RewardItem _param1) {\r\n" +
@@ -874,6 +915,10 @@ public class ManageEvent {
             case "onScrollChanged" -> "%d.scrollState";
             case "onBannerAdFailedToLoad", "onRewardAdFailedToLoad", "onInterstitialAdFailedToLoad",
                  "onAdFailedToShowFullScreenContent" -> "%d.errorCode %d.errorMessage";
+            case "onUnityAdsInitialized" -> "";
+            case "onUnityAdsFailedToInitialize", "onUnityAdsFailedToLoad", "onUnityAdsShowFailure", "onUnityBannerFailedToLoad" -> "%s.errorCode %s.errorMessage";
+            case "onUnityAdsShowComplete" -> "%s.placementId %s.completionState";
+            case "onUnityAdsAdLoaded", "onUnityAdsShowStart", "onUnityAdsShowClick" -> "%s.placementId";
             default -> EventsHandler.getBlocks(eventName);
         };
     }
@@ -886,6 +931,21 @@ public class ManageEvent {
             list.add("onAdDismissedFullScreenContent");
             list.add("onAdFailedToShowFullScreenContent");
             list.add("onAdShowedFullScreenContent");
+        }
+        if (gx.a("UnityAds")) {
+            list.add("onUnityAdsInitialized");
+            list.add("onUnityAdsFailedToInitialize");
+            list.add("onUnityAdsAdLoaded");
+            list.add("onUnityAdsFailedToLoad");
+            list.add("onUnityAdsShowComplete");
+            list.add("onUnityAdsShowFailure");
+            list.add("onUnityAdsShowStart");
+            list.add("onUnityAdsShowClick");
+            list.add("onUnityBannerLoaded");
+            list.add("onUnityBannerShown");
+            list.add("onUnityBannerFailedToLoad");
+            list.add("onUnityBannerClick");
+            list.add("onUnityBannerLeftApplication");
         }
         if (gx.a("FragmentAdapter")) {
             list.add("onTabAdded");
@@ -980,6 +1040,12 @@ public class ManageEvent {
             case "onBannerAdOpened" -> targetId + ": onAdOpened";
             case "onBannerAdClicked" -> targetId + ": onAdClicked";
             case "onBannerAdClosed" -> targetId + ": onAdClosed";
+            case "onUnityAdsInitialized" -> targetId + ": " + eventName;
+            case "onUnityAdsFailedToInitialize" -> targetId + ": " + eventName + " %s.errorCode %s.errorMessage";
+            case "onUnityAdsFailedToLoad", "onUnityAdsShowFailure", "onUnityBannerFailedToLoad" -> targetId + ": " + eventName + " %s.errorCode %s.errorMessage";
+            case "onUnityAdsShowComplete" -> targetId + ": " + eventName + " %s.placementId %s.completionState";
+            case "onUnityAdsAdLoaded", "onUnityAdsShowStart", "onUnityAdsShowClick" -> targetId + ": " + eventName + " %s.placementId";
+            case "onUnityBannerLoaded", "onUnityBannerShown", "onUnityBannerClick", "onUnityBannerLeftApplication" -> targetId + ": " + eventName;
             default -> EventsHandler.getSpec(targetId, eventName);
         };
     }

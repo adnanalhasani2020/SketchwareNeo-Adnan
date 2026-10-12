@@ -246,6 +246,19 @@ public class InnerAddComponentBottomSheet extends BottomSheetDialogFragment {
                 jC.a(scId).a(projectFileBean.getJavaName(), componentType, componentId);
                 break;
 
+            case ComponentBean.COMPONENT_TYPE_UNITY_ADS:
+                ProjectLibraryBean adNetworkSettings = jC.c(scId).b();
+                if (adNetworkSettings == null || !adNetworkSettings.isUnityAdsEnabled()) {
+                    bB.b(getContext(), "Enable Unity Ads and add its Game ID in Ad Networks first.", bB.TOAST_WARNING).show();
+                    return false;
+                }
+                if (!adNetworkSettings.getConfigurationString(ProjectLibraryBean.CONFIG_UNITY_GAME_ID, "").matches("[0-9]{4,20}")) {
+                    bB.b(getContext(), "Enter a valid Unity Game ID in Ad Networks first.", bB.TOAST_WARNING).show();
+                    return false;
+                }
+                jC.a(scId).a(projectFileBean.getJavaName(), componentType, componentId);
+                break;
+
             case ComponentBean.COMPONENT_TYPE_FILE_PICKER:
                 if (Helper.getText(binding.edInputFilePicker).isEmpty() || !componentMimeTypeValidator.b()) {
                     return false;

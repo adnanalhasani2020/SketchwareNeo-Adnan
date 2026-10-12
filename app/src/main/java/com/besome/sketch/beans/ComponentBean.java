@@ -53,6 +53,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
     public static final int COMPONENT_TYPE_FIREBASE_AUTH_PHONE = 28;
     public static final int COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE = 30;
     public static final int COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN = 31;
+    public static final int COMPONENT_TYPE_UNITY_ADS = 32;
 
     public Gx classInfo;
     @Expose
@@ -185,6 +186,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
             case COMPONENT_TYPE_FIREBASE_AUTH_PHONE -> "PhoneAuth";
             case COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE -> "Cloud Message";
             case COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN -> "Google Login";
+            case COMPONENT_TYPE_UNITY_ADS -> "Unity Ads";
             default -> ComponentsHandler.name(type);
         };
     }
@@ -221,6 +223,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
             case "FirebasePhoneAuth" -> COMPONENT_TYPE_FIREBASE_AUTH_PHONE;
             case "FirebaseCloudMessage" -> COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE;
             case "FirebaseGoogleLogin" -> COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN;
+            case "UnityAds" -> COMPONENT_TYPE_UNITY_ADS;
             default -> ComponentsHandler.id(typeName);
         };
     }
@@ -257,6 +260,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
             case COMPONENT_TYPE_FIREBASE_AUTH_PHONE -> "FirebasePhoneAuth";
             case COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE -> "FirebaseCloudMessage";
             case COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN -> "FirebaseGoogleLogin";
+            case COMPONENT_TYPE_UNITY_ADS -> "UnityAds";
             default -> ComponentsHandler.typeName(type);
         };
     }
@@ -281,6 +285,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
             case COMPONENT_TYPE_GYROSCOPE -> R.string.component_description_gyrosope;
             case COMPONENT_TYPE_FIREBASE_AUTH -> R.string.component_description_firebase_auth;
             case COMPONENT_TYPE_INTERSTITIAL_AD -> R.string.component_description_interstitial_ad;
+            case COMPONENT_TYPE_UNITY_ADS -> R.string.component_description_unity_ads;
             case COMPONENT_TYPE_FIREBASE_STORAGE -> R.string.component_description_firebase_storage;
             case COMPONENT_TYPE_CAMERA -> R.string.component_description_camera;
             case COMPONENT_TYPE_FILE_PICKER -> R.string.component_description_file_picker;
@@ -338,6 +343,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
             case COMPONENT_TYPE_FIREBASE_AUTH_PHONE -> R.drawable.ic_mtrl_firebase_sms;
             case COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE -> R.drawable.ic_mtrl_firebase_cloud;
             case COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN -> R.drawable.ic_mtrl_firebase_google;
+            case COMPONENT_TYPE_UNITY_ADS -> R.drawable.ic_mtrl_unity;
             case 36 -> R.drawable.ic_mtrl_sync;
 
             default -> ComponentsHandler.icon(type);
@@ -376,6 +382,7 @@ public class ComponentBean extends CollapsibleBean implements Parcelable {
             case COMPONENT_TYPE_FIREBASE_AUTH_PHONE -> "FirebasePhoneAuth";
             case COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE -> "FirebaseCloudMessage";
             case COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN -> "FirebaseGoogleLogin";
+            case COMPONENT_TYPE_UNITY_ADS -> "UnityAds";
             default -> ComponentsHandler.getBuildClassById(type);
         };
         classInfo = new Gx(typeName);

@@ -373,6 +373,7 @@ public class Hx {
                     case "WebView":
                     case "MapView":
                     case "InterstitialAd":
+                    case "UnityAds":
                     case "RequestNetwork":
                     case "BluetoothConnect":
                         for (ComponentEvents value : this.listeners) {

@@ -1031,6 +1031,10 @@ public class LogicEditorActivity extends BaseAppCompatActivity implements View.O
                                             eC.d(javaName, ComponentBean.COMPONENT_TYPE_INTERSTITIAL_AD, parameter);
                                             break;
 
+                                        case "unityads":
+                                            eC.d(javaName, ComponentBean.COMPONENT_TYPE_UNITY_ADS, parameter);
+                                            break;
+
                                         case "requestnetwork":
                                             eC.d(javaName, ComponentBean.COMPONENT_TYPE_REQUEST_NETWORK, parameter);
                                             break;

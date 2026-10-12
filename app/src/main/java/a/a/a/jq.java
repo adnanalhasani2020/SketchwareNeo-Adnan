@@ -149,6 +149,11 @@ public class jq {
      */
     public boolean isAdMobEnabled = false;
 
+    /** Whether Unity Ads is enabled for the current generated project. */
+    public boolean isUnityAdsEnabled = false;
+    public String unityGameId = "";
+    public boolean unityTestMode = true;
+
     /**
      * If the built-in library Google Map is enabled.
      */
@@ -273,6 +278,12 @@ public class jq {
             w.put(activityName, new a());
         }
         return w.get(activityName);
+    }
+
+    public void setupUnityAds(ProjectLibraryBean projectLibraryBean) {
+        if (projectLibraryBean == null) return;
+        unityGameId = projectLibraryBean.getConfigurationString(ProjectLibraryBean.CONFIG_UNITY_GAME_ID, "");
+        unityTestMode = Boolean.parseBoolean(projectLibraryBean.getConfigurationString(ProjectLibraryBean.CONFIG_UNITY_TEST_MODE, "true"));
     }
 
     public void setupAdmob(ProjectLibraryBean projectLibraryBean) {

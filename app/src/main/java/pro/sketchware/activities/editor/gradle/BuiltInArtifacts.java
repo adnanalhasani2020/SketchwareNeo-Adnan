@@ -3,6 +3,8 @@ package pro.sketchware.activities.editor.gradle;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import dev.aldi.sayuti.editor.manage.LocalLibrariesUtil;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -123,8 +125,14 @@ public final class BuiltInArtifacts {
         register(BuiltInLibraries.JSPECIFY, "org.jspecify", "jspecify");
         register(BuiltInLibraries.LOTTIE, "com.airbnb.android", "lottie");
         register(BuiltInLibraries.MATERIAL, "com.google.android.material", "material");
+        // OkHttp 5.x and Okio 3.x are not binary-compatible replacements for Unity Ads
+        // 4.20.1's OkHttp 3.x / Okio 1.x dependencies; major-version guards below keep
+        // the resolver from silently substituting these bundled libraries.
         register(BuiltInLibraries.OKHTTP_ANDROID, "com.squareup.okhttp3", "okhttp", "okhttp-android");
         register(BuiltInLibraries.OKIO_JVM, "com.squareup.okio", "okio", "okio-jvm");
+        // Deliberately do not register unity-ads as a Maven-satisfied built-in. Unity's
+        // runtime dependencies must be resolved from its 4.20.1 POM, not short-circuited.
+
         register(BuiltInLibraries.PLAY_SERVICES_ADS, "com.google.android.gms", "play-services-ads");
         register(BuiltInLibraries.PLAY_SERVICES_ADS_BASE, "com.google.android.gms", "play-services-ads-base");
         register(BuiltInLibraries.PLAY_SERVICES_ADS_IDENTIFIER, "com.google.android.gms", "play-services-ads-identifier");
@@ -182,7 +190,26 @@ public final class BuiltInArtifacts {
         if (match == null) return null;
         String requested = normalizeVersion(requestedVersion);
         if (requested == null) return null;
+        if (!isMajorVersionCompatible(group, artifact, match.version, requested)) return null;
         return compareVersions(match.version, requested) >= 0 ? match : null;
+    }
+
+    private static boolean isMajorVersionCompatible(String group, String artifact,
+                                                    String providedVersion, String requestedVersion) {
+        // These are especially important for Unity Ads 4.20.1, whose POM pins OkHttp 3.12.13
+        // and therefore the Okio 1.x line. The bundled Neo libraries are OkHttp 5.x/Okio 3.x.
+        boolean okhttp = "com.squareup.okhttp3".equals(group)
+                && ("okhttp".equals(artifact) || "okhttp-android".equals(artifact));
+        boolean okio = "com.squareup.okio".equals(group)
+                && ("okio".equals(artifact) || "okio-jvm".equals(artifact));
+        if (!okhttp && !okio) return true;
+        return leadingVersionPart(providedVersion).equals(leadingVersionPart(requestedVersion));
+    }
+
+    private static String leadingVersionPart(String version) {
+        int end = 0;
+        while (end < version.length() && Character.isDigit(version.charAt(end))) end++;
+        return end == 0 ? "" : version.substring(0, end);
     }
 
     @Nullable
@@ -213,6 +240,33 @@ public final class BuiltInArtifacts {
         for (String dependency : library.get().getDependencyNames()) {
             collect(dependency, out);
         }
+    }
+
+    /**
+     * Returns true when this project's enabled local Maven libraries provide a newer
+     * version of the same artifact as a bundled library. The caller can then avoid
+     * selecting the older built-in copy and prevent duplicate classes in the final DEX.
+     */
+    public static boolean isSupersededByNewerLocalArtifact(@Nullable String scId, @NonNull String libraryName) {
+        if (scId == null || scId.isEmpty() || libraryName.isEmpty()) return false;
+        try {
+            for (HashMap<String, Object> entry : LocalLibrariesUtil.getLocalLibraries(scId)) {
+                Object coordinateValue = entry.get("dependency");
+                if (coordinateValue == null) continue;
+                String[] coordinate = coordinateValue.toString().split(":", -1);
+                if (coordinate.length < 3 || coordinate[0].isEmpty() || coordinate[1].isEmpty() || coordinate[2].isEmpty()) {
+                    continue;
+                }
+                Match bundled = find(coordinate[0], coordinate[1]);
+                if (bundled != null && bundled.libraryName.equals(libraryName)
+                        && compareVersions(coordinate[2], bundled.version) > 0) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+            // If local-library metadata cannot be read, keep the existing built-in library.
+        }
+        return false;
     }
 
     public static boolean isExtracted(@NonNull String libraryName) {
