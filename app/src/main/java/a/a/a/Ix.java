@@ -528,7 +528,7 @@ public class Ix {
                 queries.addChildNode(intent);
             }
             if (c.isUnityAdsEnabled) {
-                // Unity Ads 4.21.0 manifest queries this attribution referral action on Android 11+.
+                // Unity Ads 4.20.1 manifest queries this attribution referral action on Android 11+.
                 XmlBuilder referralIntent = new XmlBuilder("intent");
                 XmlBuilder referralAction = new XmlBuilder("action");
                 referralAction.addAttribute("android", "name", "com.attribution.REFERRAL_PROVIDER");

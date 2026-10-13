@@ -72,8 +72,8 @@ import mod.jbk.util.TestkeySignBridge;
 import mod.pranav.build.JarBuilder;
 import mod.pranav.viewbinding.ViewBindingBuilder;
 import pro.sketchware.SketchApplication;
-import pro.sketchware.activities.editor.gradle.UnityAdsDependencyManager;
 import pro.sketchware.util.library.BuiltInLibraryManager;
+import pro.sketchware.activities.editor.gradle.UnityAdsDependencyManager;
 import pro.sketchware.utility.FilePathUtil;
 import mod.hey.studios.activity.managers.cpp.CppExporter;
 import mod.hey.studios.activity.managers.cpp.NativeCompiler;
@@ -810,9 +810,9 @@ public class ProjectBuilder {
             builtInLibraryManager.addLibrary(BuiltInLibraries.PLAY_SERVICES_ADS);
         }
         if (yq.N.isUnityAdsEnabled) {
-            // The Unity SDK root stays in Neo's bundled libs.zip. Missing transitives are
-            // prepared by the background build task, never when settings are saved.
-            builtInLibraryManager.addLibrary(BuiltInLibraries.UNITY_ADS);
+            // Unity Ads 4.20.1 must be supplied by its complete Maven dependency graph,
+            // not by Neo's older bundled 4.21.0 classes.jar/classes.dex pair.
+            UnityAdsDependencyManager.requireReadyForBuild(yq.sc_id);
             for (String libraryName : UnityAdsDependencyManager.getProvidedBuiltInLibraries(yq.sc_id)) {
                 builtInLibraryManager.addLibrary(libraryName);
             }

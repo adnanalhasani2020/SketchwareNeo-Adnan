@@ -3,12 +3,23 @@ package mod.sketchlibx.importer;
 
 import android.util.Log;
 
+import com.besome.sketch.beans.BlockBean;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
+
+import mod.sketchlibx.project.editor.BlocksConverter;
 
 /**
  * Converts a small, EXPLICITLY SCOPED subset of Android Studio Java into real
@@ -74,6 +85,7 @@ import java.util.regex.Pattern;
 public class JavaLogicConverter {
 
     private static final String TAG = "JavaLogicConverter";
+    private static final Gson BLOCK_JSON = new GsonBuilder().excludeFieldsWithoutExposeAnnotation().create();
 
     // ── Public result ────────────────────────────────────────────────────────
 
@@ -88,6 +100,8 @@ public class JavaLogicConverter {
         public String eventsSection = "";
         /** Human-readable list of everything NOT converted to native blocks, with why. */
         public final List<String> unsupported = new ArrayList<>();
+        /** Function declaration lines stored in data/logic @<Activity>.java_func. */
+        public String functionDeclarations = "";
     }
 
     // ── Field/variable tracking (very small, heuristic symbol table) ──────────
@@ -99,6 +113,10 @@ public class JavaLogicConverter {
      *  so onClick registration is always attempted without per-type validation. */
     private final Map<String, String> localVarToViewId = new LinkedHashMap<>();   // e.g. "btnSave" -> "btnSave"
     private final Map<String, String> bindingRefToViewId = new LinkedHashMap<>(); // "binding.btnSave" -> "btnSave"
+    private final Map<String, Integer> knownViewTypes = new LinkedHashMap<>();
+    private final Map<String, HelperMethod> helperMethods = new LinkedHashMap<>();
+    private final Map<String, String> helperSpecs = new LinkedHashMap<>();
+    private final java.util.Set<String> ambiguousHelperNames = new java.util.HashSet<>();
 
     private final List<String> unsupported = new ArrayList<>();
     private final Map<String, String> componentsById = new LinkedHashMap<>(); // componentId -> JSON
@@ -115,29 +133,71 @@ public class JavaLogicConverter {
      *                     can't confirm the target actually exists on this screen)
      */
     public ConversionResult convert(String javaSource, java.util.Set<String> knownViewIds) {
+        Map<String, Integer> defaultTypes = new LinkedHashMap<>();
+        if (knownViewIds != null) for (String id : knownViewIds) defaultTypes.put(id, 0);
+        return convert(javaSource, knownViewIds, defaultTypes, true);
+    }
+
+    /**
+     * Convert a source file using actual imported view types and the MoreBlocks option.
+     * Unsupported Java is always reported and preserved as addSourceDirectly/raw source;
+     * it is never silently deleted.
+     */
+    public ConversionResult convert(String javaSource, java.util.Set<String> knownViewIds,
+                                    Map<String, Integer> viewTypes, boolean extractCustomMethods) {
         ConversionResult result = new ConversionResult();
         unsupported.clear();
         knownScalarFields.clear();
         localVarToViewId.clear();
         bindingRefToViewId.clear();
+        knownViewTypes.clear();
+        if (viewTypes != null) knownViewTypes.putAll(viewTypes);
+        helperMethods.clear();
+        helperSpecs.clear();
+        ambiguousHelperNames.clear();
         componentsById.clear();
 
         try {
             scanClassFields(javaSource, result);
             scanViewBindingsAndFindViewById(javaSource, knownViewIds);
+            if (extractCustomMethods) discoverCustomMethods(javaSource, result);
 
             String onCreateBody = extractMethodBody(javaSource, "onCreate");
             if (onCreateBody != null) {
                 BlockSection section = new BlockSection();
-                convertStatements(splitStatements(onCreateBody), section, result);
-                result.sections.put("onCreate_initializeLogic", section.render());
+                // Sketchware Neo owns Activity view inflation and its content view. Remove
+                // framework setup declarations before translating, while retaining ordinary
+                // statements that merely mention a view lookup inside a larger expression.
+                List<String> logicStatements = removeManagedViewSetupStatements(splitStatements(onCreateBody),
+                        "initializeLogic");
+                // Click listener registration is emitted as its own Sketchware event
+                // section. Remove it before alias rewriting, otherwise a local Java name
+                // such as `buttonSave` would be changed to the widget id and the listener
+                // would no longer be recognized as already handled.
+                List<String> eventFilteredStatements = removeResolvedClickListenerStatementList(logicStatements, knownViewIds);
+                List<String> normalizedStatements = rewriteViewAliases(eventFilteredStatements);
+                convertStatements(normalizedStatements, section, result);
+                String rendered = section.render();
+                // Prefer Neo's real BlocksConverter after replacing Java local/binding view
+                // references with the actual Sketchware widget ids. This prevents stale
+                // variables from producing source blocks that reference no generated field.
+                String richInput = joinStatements(normalizedStatements);
+                String rich = containsCustomMethodCall(richInput)
+                        ? null : convertWithNativeBlockConverter(richInput, java.util.Collections.emptyMap(), result, "onCreate");
+                result.sections.put("onCreate_initializeLogic", rich != null ? rich : rendered);
             }
 
             String onBackPressedBody = extractMethodBody(javaSource, "onBackPressed");
             if (onBackPressedBody != null) {
+                List<String> backStatements = rewriteViewAliases(removeManagedViewSetupStatements(
+                        splitStatements(onBackPressedBody), "onBackPressed"));
+                String normalizedBackBody = joinStatements(backStatements);
                 BlockSection section = new BlockSection();
-                convertStatements(splitStatements(onBackPressedBody), section, result);
-                result.sections.put("onBackPressed_onBackPressed", section.render());
+                convertStatements(backStatements, section, result);
+                String rendered = section.render();
+                String rich = containsCustomMethodCall(normalizedBackBody) ? null
+                        : convertWithNativeBlockConverter(normalizedBackBody, java.util.Collections.emptyMap(), result, "onBackPressed");
+                result.sections.put("onBackPressed_onBackPressed", rich != null ? rich : rendered);
             }
 
             // onClickListener registrations found anywhere in the class (field-level
@@ -145,12 +205,14 @@ public class JavaLogicConverter {
             // listeners attached in helper methods are still found).
             findAndConvertClickListeners(javaSource, result, knownViewIds);
 
-            for (String badLifecycle : new String[]{"onStart", "onResume", "onPause", "onStop", "onDestroy"}) {
-                if (extractMethodBody(javaSource, badLifecycle) != null) {
-                    String msg = "UNSUPPORTED: " + badLifecycle + "() body -> no confirmed Sketchware "
-                            + "logic section exists for this lifecycle callback (only onCreate and "
-                            + "onBackPressed have confirmed section names). Left in the copied raw "
-                            + ".java source only; not wired into blocks.";
+            for (String unsupportedCallback : new String[]{"onStart", "onResume", "onPause", "onStop", "onDestroy",
+                    "onRestart", "onActivityResult", "onRequestPermissionsResult", "onNewIntent",
+                    "onSaveInstanceState", "onRestoreInstanceState", "onCreateOptionsMenu", "onOptionsItemSelected",
+                    "onNavigationItemSelected", "onCheckedChanged", "onTextChanged", "onItemClick", "onItemSelected",
+                    "onNothingSelected", "onLongClick", "onTouch", "onKey", "onConfigurationChanged",
+                    "onWindowFocusChanged"}) {
+                if (extractMethodBody(javaSource, unsupportedCallback) != null) {
+                    String msg = "UNSUPPORTED: " + unsupportedCallback + "() has no verified native Sketchware event-section mapping in this importer. Original Java is preserved, but this callback is not wired to blocks.";
                     result.unsupported.add(msg);
                     Log.w(TAG, msg);
                 }
@@ -177,23 +239,394 @@ public class JavaLogicConverter {
         // excluding the two special always-exists sections.
         StringBuilder events = new StringBuilder();
         for (String sectionName : result.sections.keySet()) {
-            if (sectionName.equals("onCreate_initializeLogic") || sectionName.equals("onBackPressed_onBackPressed"))
-                continue;
+            if (sectionName.equals("onCreate_initializeLogic") || sectionName.equals("onBackPressed_onBackPressed")
+                    || sectionName.endsWith("_moreBlock")) continue;
             int lastUnderscore = sectionName.lastIndexOf('_');
             if (lastUnderscore <= 0) continue;
             String targetId = sectionName.substring(0, lastUnderscore);
             String eventName = sectionName.substring(lastUnderscore + 1);
+            int targetType = knownViewTypes.containsKey(targetId) ? knownViewTypes.get(targetId) : 0;
             events.append("{\"eventName\":\"").append(eventName).append("\",")
-                  .append("\"targetId\":\"").append(targetId).append("\",")
-                  .append("\"targetType\":0}\n");
+                  .append("\"eventType\":1,\"targetId\":\"").append(targetId).append("\",")
+                  .append("\"targetType\":").append(targetType).append("}\n");
         }
         result.eventsSection = events.toString();
+        result.functionDeclarations = buildFunctionDeclarations();
 
         result.unsupported.addAll(0, unsupported);
         return result;
     }
 
+    // ── Java void-method → Sketchware MoreBlock conversion ────────────────────
+
+    private static final class HelperMethod {
+        final String name;
+        final String body;
+        final List<String> parameters = new ArrayList<>();
+        final List<String> parameterTypes = new ArrayList<>();
+        final String declaration;
+        HelperMethod(String name, String body, List<String> names, List<String> types, String declaration) {
+            this.name = name; this.body = body; this.parameters.addAll(names);
+            this.parameterTypes.addAll(types); this.declaration = declaration;
+        }
+    }
+
+    private static final java.util.Set<String> CALLBACK_METHODS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart",
+            "onBackPressed", "onActivityResult", "onRequestPermissionsResult", "onNewIntent",
+            "onSaveInstanceState", "onRestoreInstanceState", "onClick", "onLongClick", "onItemClick",
+            "onItemSelected", "onNothingSelected", "onTextChanged", "beforeTextChanged", "afterTextChanged",
+            "onCheckedChanged", "onTouch", "onKey", "onOptionsItemSelected", "onCreateOptionsMenu",
+            "onNavigationItemSelected", "onBind", "onUnbind", "onReceive", "onHandleIntent",
+            "onConfigurationChanged", "onWindowFocusChanged", "onAttachedToWindow", "onDetachedFromWindow",
+            "onCreateView", "onViewCreated", "onViewStateRestored", "onDestroyView", "onAttach", "onDetach"));
+
+    private void discoverCustomMethods(String source, ConversionResult result) {
+        try {
+            CompilationUnit unit = StaticJavaParser.parse(source);
+            if (unit.getTypes().isEmpty()) return;
+            TypeDeclaration<?> primary = unit.getTypes().get(0);
+            for (MethodDeclaration method : primary.getMethods()) {
+                String name = method.getNameAsString();
+                if (CALLBACK_METHODS.contains(name) || !method.getBody().isPresent()
+                        || method.isNative() || method.isAbstract()) continue;
+                if (!method.getType().isVoidType()) {
+                    result.unsupported.add("UNSUPPORTED: method " + name + " returns " + method.getTypeAsString()
+                            + "; the documented Sketchware Neo MoreBlock format has no confirmed direct return-value support. Original Java source is preserved.");
+                    continue;
+                }
+                if (!name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                    result.unsupported.add("UNSUPPORTED: method name '" + name + "' is not safe for a Sketchware MoreBlock identifier; original Java source is preserved.");
+                    continue;
+                }
+                List<String> names = new ArrayList<>();
+                List<String> types = new ArrayList<>();
+                boolean compatible = true;
+                for (com.github.javaparser.ast.body.Parameter parameter : method.getParameters()) {
+                    String token = moreBlockType(parameter.getType().asString());
+                    if (token == null || parameter.isVarArgs()
+                            || !parameter.getNameAsString().matches("[A-Za-z_][A-Za-z0-9_]*")) { compatible = false; break; }
+                    names.add(parameter.getNameAsString());
+                    types.add(token);
+                }
+                if (!compatible) {
+                    result.unsupported.add("UNSUPPORTED: method " + name + " has parameters that cannot be represented as MoreBlock inputs; copied original source only.");
+                    continue;
+                }
+                if (ambiguousHelperNames.contains(name)) {
+                    continue;
+                }
+                if (helperMethods.containsKey(name)) {
+                    helperMethods.remove(name);
+                    helperSpecs.remove(name);
+                    ambiguousHelperNames.add(name);
+                    result.unsupported.add("UNSUPPORTED: overloaded method " + name + " cannot be represented unambiguously as a single MoreBlock; all overloads remain in the preserved Java source.");
+                    continue;
+                }
+                String declaration = buildFunctionDeclaration(name, names, types);
+                String body = method.getBody().get().toString();
+                if (body.length() >= 2) body = body.substring(1, body.length() - 1);
+                helperMethods.put(name, new HelperMethod(name, body, names, types, declaration));
+                helperSpecs.put(name, declaration);
+            }
+            for (HelperMethod helper : helperMethods.values()) {
+                List<String> helperStatements = rewriteViewAliases(removeManagedViewSetupStatements(
+                        splitStatements(helper.body), "MoreBlock " + helper.name));
+                String normalizedHelperBody = joinStatements(helperStatements);
+                BlockSection section = new BlockSection();
+                convertStatements(helperStatements, section, result);
+                String legacy = section.render();
+                Map<String, String> argumentTypes = new LinkedHashMap<>();
+                for (int i = 0; i < helper.parameters.size(); i++) {
+                    argumentTypes.put(helper.parameters.get(i), helper.parameterTypes.get(i));
+                }
+                String rich = containsCustomMethodCall(normalizedHelperBody) ? null
+                        : convertWithNativeBlockConverter(normalizedHelperBody, argumentTypes, result, "MoreBlock " + helper.name);
+                result.sections.put(helper.name + "_moreBlock", rich != null ? rich : legacy);
+            }
+        } catch (Exception e) {
+            String warning = "UNSUPPORTED: Java AST parsing failed; custom helper methods were not extracted (" + e.getMessage() + "). Original source remains copied.";
+            result.unsupported.add(warning);
+            Log.w(TAG, warning, e);
+        }
+    }
+
+    private String buildFunctionDeclarations() {
+        StringBuilder out = new StringBuilder();
+        for (HelperMethod helper : helperMethods.values()) out.append(helper.declaration).append("\n");
+        return out.toString();
+    }
+
+    private String buildFunctionDeclaration(String name, List<String> params, List<String> types) {
+        StringBuilder out = new StringBuilder(name).append(":").append(name);
+        for (int i = 0; i < params.size(); i++) out.append(" %").append(types.get(i)).append(".").append(params.get(i));
+        return out.toString();
+    }
+
+    private String moreBlockType(String type) {
+        if ("String".equals(type) || "java.lang.String".equals(type) || "CharSequence".equals(type)) return "s";
+        if ("boolean".equals(type) || "Boolean".equals(type) || "java.lang.Boolean".equals(type)) return "b";
+        if ("byte".equals(type) || "short".equals(type) || "int".equals(type) || "long".equals(type)
+                || "float".equals(type) || "double".equals(type) || "Integer".equals(type) || "Long".equals(type)
+                || "Float".equals(type) || "Double".equals(type)) return "d";
+        return null;
+    }
+
+    private boolean tryConvertCustomCall(String stmt, BlockSection section, ConversionResult result) {
+        Matcher call = Pattern.compile("^\\s*(?:this\\.)?([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\((.*)\\)\\s*;?$", Pattern.DOTALL).matcher(stmt.trim());
+        if (!call.matches()) return false;
+        String name = call.group(1);
+        String declaration = helperSpecs.get(name);
+        if (declaration == null) return false;
+        List<String> args = splitCommaArguments(call.group(2));
+        HelperMethod helper = helperMethods.get(name);
+        if (helper == null) return false;
+        if (args.size() != helper.parameters.size()) {
+            result.unsupported.add("UNSUPPORTED: call to MoreBlock '" + name + "' has " + args.size()
+                    + " argument(s), expected " + helper.parameters.size() + "; original statement is preserved as source.");
+            return false;
+        }
+        for (int i = 0; i < args.size(); i++) {
+            if (!isSafeMoreBlockLiteral(args.get(i), helper.parameterTypes.get(i))) {
+                result.unsupported.add("UNSUPPORTED: call to MoreBlock '" + name + "' uses a non-literal or type-mismatched argument for '"
+                        + helper.parameters.get(i) + "'; original statement is preserved as source.");
+                return false;
+            }
+        }
+        section.addStatement("definedFunc", declaration, args.toArray(new String[0]), "");
+        return true;
+    }
+
+    private boolean isSafeMoreBlockLiteral(String value, String type) {
+        if (value == null) return false;
+        String literal = value.trim();
+        if ("b".equals(type)) return "true".equals(literal) || "false".equals(literal);
+        if ("d".equals(type)) return literal.matches("-?\\d+(?:\\.\\d+)?[fFdDlL]?");
+        if ("s".equals(type)) return literal.length() >= 2 && literal.startsWith("\"") && literal.endsWith("\"");
+        return false;
+    }
+
+    private List<String> splitCommaArguments(String text) {
+        List<String> values = new ArrayList<>();
+        if (text == null || text.trim().isEmpty()) return values;
+        int start = 0, depth = 0; boolean inString = false, inChar = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) { if (c == '\\') i++; else if (c == '"') inString = false; continue; }
+            if (inChar) { if (c == '\\') i++; else if (c == '\'') inChar = false; continue; }
+            if (c == '"') { inString = true; continue; }
+            if (c == '\'') { inChar = true; continue; }
+            if (c == '(' || c == '[' || c == '{') depth++;
+            else if (c == ')' || c == ']' || c == '}') depth--;
+            else if (c == ',' && depth == 0) { values.add(text.substring(start, i).trim()); start = i + 1; }
+        }
+        values.add(text.substring(start).trim());
+        return values;
+    }
+
+    /**
+     * Runs the same block conversion engine used by Sketchware Neo's Logic editor.
+     * BlockBean's @Expose fields match the persisted logic-block schema; unsupported
+     * statements become addSourceDirectly blocks inside that engine instead of being lost.
+     */
+    private String convertWithNativeBlockConverter(String body, Map<String, String> argumentTypes,
+                                                   ConversionResult result, String context) {
+        if (body == null || body.trim().isEmpty()) return null;
+        try {
+            BlocksConverter.ConversionResult converted = BlocksConverter.convert(body, argumentTypes);
+            if (converted == null || converted.error != null || converted.blocks == null || converted.blocks.isEmpty()) {
+                if (converted != null && converted.error != null) {
+                    result.unsupported.add("Block engine could not parse " + context + ": " + converted.error
+                            + ". Conservative conversion was used instead.");
+                }
+                return null;
+            }
+            StringBuilder out = new StringBuilder();
+            for (BlockBean block : converted.blocks) {
+                if (block == null || block.id == null || block.opCode == null || block.parameters == null) {
+                    result.unsupported.add("Block engine emitted an incomplete block in " + context
+                            + "; conservative conversion was used instead.");
+                    return null;
+                }
+                out.append(BLOCK_JSON.toJson(block)).append('\n');
+            }
+            if (converted.fallbackCount > 0) {
+                result.unsupported.add(context + ": " + converted.fallbackCount
+                        + " statement(s) were preserved as addSourceDirectly blocks by the native block converter.");
+            }
+            return out.toString();
+        } catch (Throwable e) {
+            Log.w(TAG, "Native BlocksConverter failed for " + context + "; keeping conservative conversion", e);
+            result.unsupported.add("Native BlocksConverter failed for " + context + " (" + e.getClass().getSimpleName()
+                    + "); conservative conversion was used and raw Java remains copied.");
+            return null;
+        }
+    }
+
+    private boolean containsCustomMethodCall(String body) {
+        if (body == null || helperMethods.isEmpty()) return false;
+        for (String methodName : helperMethods.keySet()) {
+            if (Pattern.compile("\\b(?:this\\s*\\.\\s*)?" + Pattern.quote(methodName) + "\\s*\\(")
+                    .matcher(body).find()) return true;
+        }
+        return false;
+    }
+
+    /** Remove top-level listener statements that are separately written as event sections. */
+    private List<String> removeResolvedClickListenerStatementList(List<String> statements,
+                                                                  java.util.Set<String> knownViewIds) {
+        List<String> out = new ArrayList<>();
+        for (String statement : statements) {
+            Matcher listener = ON_CLICK.matcher(statement);
+            if (listener.find() && listener.start() == 0) {
+                String target = listener.group(1);
+                String id = localVarToViewId.get(target);
+                if (id == null) id = bindingRefToViewId.get(target);
+                if (id != null && (knownViewIds == null || knownViewIds.contains(id))) continue;
+                // Never persist a listener-registration statement as source code in an
+                // event body. If its target cannot be resolved to a real imported widget,
+                // the Java variable will not exist in Neo's generated Activity. The
+                // original source is preserved under android_studio_original and the
+                // separate listener scanner logs the unsupported mapping.
+                unsupported.add("UNSUPPORTED: omitted unresolved listener registration '" + truncate(statement, 90)
+                        + "' from initializeLogic because its target is not a known imported widget; original Java is preserved.");
+                continue;
+            }
+            out.add(statement);
+        }
+        return out;
+    }
+
+    private String joinStatements(List<String> statements) {
+        StringBuilder out = new StringBuilder();
+        for (String statement : statements) out.append(statement).append('\n');
+        return out.toString();
+    }
+
+    /**
+     * Resolve source-only Java references such as `btnSave.setText(...)` and
+     * `binding.titleText.setText(...)` to the exact widget IDs found in the imported
+     * layout. Replacements are restricted to Java code outside string/character
+     * literals and comments so text content is not accidentally rewritten.
+     */
+    private List<String> rewriteViewAliases(List<String> statements) {
+        List<String> rewritten = new ArrayList<>(statements.size());
+        for (String statement : statements) rewritten.add(rewriteViewAliases(statement));
+        return rewritten;
+    }
+
+    private String rewriteViewAliases(String source) {
+        if (source == null || source.isEmpty() || (localVarToViewId.isEmpty() && bindingRefToViewId.isEmpty())) return source;
+        StringBuilder out = new StringBuilder(source.length());
+        boolean string = false, character = false, lineComment = false, blockComment = false, escaped = false;
+        for (int i = 0; i < source.length();) {
+            char c = source.charAt(i);
+            char n = i + 1 < source.length() ? source.charAt(i + 1) : '\0';
+            if (lineComment) {
+                out.append(c); i++;
+                if (c == '\n') lineComment = false;
+                continue;
+            }
+            if (blockComment) {
+                out.append(c); i++;
+                if (c == '*' && n == '/') { out.append('/'); i++; blockComment = false; }
+                continue;
+            }
+            if (string || character) {
+                out.append(c); i++;
+                if (escaped) { escaped = false; continue; }
+                if (c == '\\') { escaped = true; continue; }
+                if (string && c == '"') string = false;
+                else if (character && c == '\'') character = false;
+                continue;
+            }
+            if (c == '/' && n == '/') { out.append("//"); i += 2; lineComment = true; continue; }
+            if (c == '/' && n == '*') { out.append("/*"); i += 2; blockComment = true; continue; }
+            if (c == '"') { out.append(c); i++; string = true; continue; }
+            if (c == '\'') { out.append(c); i++; character = true; continue; }
+            if (Character.isJavaIdentifierStart(c) || c == '$') {
+                int start = i++;
+                while (i < source.length() && (Character.isJavaIdentifierPart(source.charAt(i)) || source.charAt(i) == '$')) i++;
+                String token = source.substring(start, i);
+                if ("binding".equals(token) && i < source.length() && source.charAt(i) == '.') {
+                    int fieldStart = i + 1;
+                    int fieldEnd = fieldStart;
+                    if (fieldStart < source.length() && (Character.isJavaIdentifierStart(source.charAt(fieldStart)) || source.charAt(fieldStart) == '$')) {
+                        fieldEnd++;
+                        while (fieldEnd < source.length() && (Character.isJavaIdentifierPart(source.charAt(fieldEnd)) || source.charAt(fieldEnd) == '$')) fieldEnd++;
+                        String field = source.substring(fieldStart, fieldEnd);
+                        String mapped = bindingRefToViewId.get("binding." + field);
+                        if (mapped != null) { out.append(mapped); i = fieldEnd; continue; }
+                    }
+                }
+                String mapped = localVarToViewId.get(token);
+                out.append(mapped == null ? token : mapped);
+                continue;
+            }
+            out.append(c); i++;
+        }
+        return out.toString();
+    }
+
+    private String resolveBindingViewId(String fieldName, java.util.Set<String> knownViewIds) {
+        if (fieldName == null || knownViewIds == null || knownViewIds.isEmpty()) return null;
+        if (knownViewIds.contains(fieldName)) return fieldName;
+        // Android ViewBinding converts an XML id such as `title_text` to `titleText`.
+        for (String id : knownViewIds) {
+            if (fieldName.equals(snakeToCamel(id))) return id;
+        }
+        return null;
+    }
+
+    private String snakeToCamel(String id) {
+        StringBuilder result = new StringBuilder(id.length());
+        boolean upperNext = false;
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (c == '_' || c == '-') { upperNext = true; continue; }
+            result.append(upperNext ? Character.toUpperCase(c) : c);
+            upperNext = false;
+        }
+        return result.toString();
+    }
+
+
     // ── Field scanning (heuristic) ─────────────────────────────────────────────
+
+    /** Returns true for Activity view-inflation/setup statements owned by Sketchware. */
+    private boolean isSketchwareManagedViewSetup(String statement) {
+        if (statement == null) return false;
+        String s = statement.trim();
+        if (s.isEmpty()) return false;
+        // splitStatements() keeps complete statements together even where the source
+        // uses multiple lines; preserve application logic while omitting the framework setup.
+        if (Pattern.compile("(?s)^\\s*setContentView\\s*\\(.*$", Pattern.CASE_INSENSITIVE).matcher(s).find()) return true;
+        if (Pattern.compile("(?is)^\\s*(?:(?:final\\s+)?[\\w.$<>?\\[\\]]+\\s+)?[\\w$]+\\s*=\\s*(?:\\([^)]*\\)\\s*)?findViewById\\s*\\(.*$").matcher(s).matches()) return true;
+        if (Pattern.compile("(?is)^\\s*findViewById\\s*\\(.*$").matcher(s).matches()) return true;
+        if (s.contains("Binding") && s.contains("=") && s.contains(".inflate(")) return true;
+        return Pattern.compile("(?s)^\\s*(?:final\\s+)?[\\w.$<>?]+Binding\\s+[\\w$]+\\s*=.*$", Pattern.CASE_INSENSITIVE).matcher(s).find();
+    }
+
+    /**
+     * Removes only the standalone framework setup statements that Sketchware generates
+     * itself for an Activity/screen. View aliases are discovered separately so later
+     * references can still be mapped to the corresponding Sketchware widget IDs.
+     */
+    private List<String> removeManagedViewSetupStatements(List<String> statements, String context) {
+        List<String> retained = new ArrayList<>();
+        if (statements == null || statements.isEmpty()) return retained;
+        for (String statement : statements) {
+            if (isSketchwareManagedViewSetup(statement)) {
+                String label = context == null || context.trim().isEmpty() ? "screen logic" : context;
+                unsupported.add("Omitted framework view setup from " + label
+                        + " because Sketchware Neo generates the Activity content view itself: "
+                        + truncate(statement == null ? "" : statement.trim(), 160));
+                continue;
+            }
+            retained.add(statement);
+        }
+        return retained;
+    }
 
     private static final Pattern FIELD_DECL = Pattern.compile(
             "(?m)^\\s*(?:private|public|protected)?\\s*(int|boolean|String|float)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?:=[^;]*)?;");
@@ -232,8 +665,9 @@ public class JavaLogicConverter {
             // ViewBinding turns snake_case ids into camelCase field names — we only accept
             // an exact (case-sensitive) match against the real xml id, no camelCase guessing,
             // to avoid wiring an event to the wrong view.
-            if (knownViewIds != null && knownViewIds.contains(camelId)) {
-                bindingRefToViewId.put("binding." + camelId, camelId);
+            String resolvedId = resolveBindingViewId(camelId, knownViewIds);
+            if (resolvedId != null) {
+                bindingRefToViewId.put("binding." + camelId, resolvedId);
             }
         }
     }
@@ -285,9 +719,16 @@ public class JavaLogicConverter {
                         + "unconverted in source only.");
                 continue;
             }
+            List<String> eventStatements = rewriteViewAliases(removeManagedViewSetupStatements(
+                    splitStatements(body), "event " + viewId + ".onClick"));
+            String normalizedBody = joinStatements(eventStatements);
             BlockSection section = new BlockSection();
-            convertStatements(splitStatements(body), section, result);
-            result.sections.put(sectionName, section.render());
+            convertStatements(eventStatements, section, result);
+            String legacy = section.render();
+            String rich = containsCustomMethodCall(normalizedBody) ? null
+                    : convertWithNativeBlockConverter(normalizedBody, java.util.Collections.emptyMap(), result,
+                    "event " + viewId + ".onClick");
+            result.sections.put(sectionName, rich != null ? rich : legacy);
         }
     }
 
@@ -513,6 +954,8 @@ public class JavaLogicConverter {
                     new String[]{componentId}, "");
             return;
         }
+
+        if (tryConvertCustomCall(stmt, section, result)) return;
 
         Matcher assign = SIMPLE_ASSIGN.matcher(stmt);
         if (assign.matches()) {

@@ -75,7 +75,20 @@ public class GradleParser {
         if (gradle.exists())          target = gradle;
         else if (gradleKts.exists())  target = gradleKts;
 
-        return parseFile(target, appModuleDir);
+        ParsedGradle parsed = parseFile(target, appModuleDir);
+        // Android Gradle properties can live either beside the root settings.gradle
+        // or inside the app module. Parse root first, then module so module values win.
+        // Without this, parsePropertiesInto() existed but was never called by the import flow,
+        // so an explicit android.enableR8 setting was silently ignored.
+        File projectRoot = appModuleDir == null ? null : appModuleDir.getParentFile();
+        File rootProperties = projectRoot == null ? null : new File(projectRoot, "gradle.properties");
+        File moduleProperties = appModuleDir == null ? null : new File(appModuleDir, "gradle.properties");
+        if (rootProperties != null && rootProperties.isFile()) parsePropertiesInto(rootProperties, parsed);
+        if (moduleProperties != null && moduleProperties.isFile()
+                && (rootProperties == null || !moduleProperties.getAbsolutePath().equals(rootProperties.getAbsolutePath()))) {
+            parsePropertiesInto(moduleProperties, parsed);
+        }
+        return parsed;
     }
 
     public ParsedGradle parseFile(File buildGradleFile, File appModuleDir) {
@@ -175,9 +188,14 @@ public class GradleParser {
             boolean hasNdkBuild = content.contains("ndkBuild {") || new File(appModuleDir, "src/main/jni/Android.mk").exists()
                     || new File(appModuleDir, "jni/Android.mk").exists();
 
+            boolean hasNativeSourceTree = hasNativeSourceOrArchive(new File(appModuleDir, "src/main/cpp"))
+                    || hasNativeSourceOrArchive(new File(appModuleDir, "src/main/jni"))
+                    || hasNativeSourceOrArchive(new File(appModuleDir, "jni"));
             result.hasNativeLibs = hasCMake || hasNdkBuild
                     || content.contains("externalNativeBuild")
-                    || new File(appModuleDir, "src/main/jniLibs").exists();
+                    || new File(appModuleDir, "src/main/jniLibs").exists()
+                    || hasNativeSourceTree
+                    || hasNativeSharedLibrary(new File(appModuleDir, "libs"));
 
             result.nativeBuildSystem = hasCMake ? ParsedGradle.NativeBuildSystem.CMAKE
                     : hasNdkBuild ? ParsedGradle.NativeBuildSystem.NDK_BUILD
@@ -203,6 +221,40 @@ public class GradleParser {
                 + " vCode=" + result.versionCode
                 + " minSdk=" + result.minSdk);
         return result;
+    }
+
+    private boolean hasNativeSourceOrArchive(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        File[] files = dir.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                String n = file.getName();
+                if (n.equals(".git") || n.equals(".gradle") || n.equals("build") || n.equals(".cxx")) continue;
+                if (hasNativeSourceOrArchive(file)) return true;
+            } else {
+                String n = file.getName().toLowerCase(java.util.Locale.ROOT);
+                if (n.endsWith(".c") || n.endsWith(".cc") || n.endsWith(".cpp") || n.endsWith(".cxx")
+                        || n.endsWith(".a") || n.endsWith(".so")) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasNativeSharedLibrary(File dir) {
+        if (dir == null || !dir.isDirectory()) return false;
+        File[] files = dir.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                String n = file.getName();
+                if (n.equals(".git") || n.equals(".gradle") || n.equals("build")) continue;
+                if (hasNativeSharedLibrary(file)) return true;
+            } else if (file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".so")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public List<GradleDependency> parseDependencyList(String content) {

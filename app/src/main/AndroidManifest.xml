@@ -29,6 +29,13 @@
         android:usesCleartextTraffic="true"
         tools:targetApi="p">
         <activity
+            android:name=".activities.importer.AndroidStudioImportActivity"
+            android:exported="false"
+            android:label="Import Android Studio Project"
+            android:screenOrientation="unspecified"
+            android:theme="@style/Theme.SketchwarePro" />
+
+        <activity
             android:name=".activities.iconcreator.IconCreatorActivity"
             android:exported="false"
             android:label="@string/title_activity_icon_creator"

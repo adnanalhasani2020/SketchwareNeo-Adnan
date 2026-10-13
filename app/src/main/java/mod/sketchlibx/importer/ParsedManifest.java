@@ -2,6 +2,8 @@ package mod.sketchlibx.importer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Holds all data extracted from AndroidManifest.xml.
@@ -14,14 +16,29 @@ public class ParsedManifest {
     public String iconResName = "ic_launcher";   // raw name, no @drawable/ prefix
     public String appTheme    = "";               // raw value, e.g. "@style/AppTheme"
 
+    /** Android attributes to preserve on the generated <application> element. */
+    public final Map<String, String> applicationAttributes = new LinkedHashMap<>();
+
     /** Simple class name of android:name on <application>, null if none declared. */
     public String applicationClassName = null;
 
     public final List<ActivityEntry> activities = new ArrayList<>();
+    /** Permission names for Neo's data/permission file. */
     public final List<String> permissions = new ArrayList<>();
+    /** Full standard uses-permission attributes for the manifest injector. */
+    public final List<PermissionEntry> permissionEntries = new ArrayList<>();
+    /** Manifest constructs that this importer cannot inject without changing their semantics. */
+    public final List<String> unsupportedManifestItems = new ArrayList<>();
     public final List<ComponentEntry> services = new ArrayList<>();
     public final List<ComponentEntry> receivers = new ArrayList<>();
     public final List<ComponentEntry> providers = new ArrayList<>();
+
+
+    public static class PermissionEntry {
+        public String tagName = "uses-permission";
+        public String name = "";
+        public final Map<String, String> attributes = new LinkedHashMap<>();
+    }
 
     // ── Shared data for <service> / <receiver> / <provider> ──────────────────
 
@@ -34,6 +51,8 @@ public class ParsedManifest {
 
         /** Only populated for <provider> entries. */
         public String authorities = "";
+        /** Serialized source XML for this service/receiver/provider, including intent filters. */
+        public String rawXml = "";
 
         public ComponentEntry(String rawClassName, String simpleClassName) {
             this.rawClassName    = rawClassName;
@@ -68,6 +87,12 @@ public class ParsedManifest {
 
         /** android:theme on this specific activity (may be empty → inherit app theme) */
         public String theme = "";
+
+        /** Android attributes from the source Activity other than android:name. */
+        public final Map<String, String> androidAttributes = new LinkedHashMap<>();
+
+        /** Raw nested intent-filter/meta-data/property snippets from the source Activity. */
+        public String childComponentsXml = "";
 
         /** True if this activity has MAIN + LAUNCHER intent-filter */
         public boolean isLauncher = false;

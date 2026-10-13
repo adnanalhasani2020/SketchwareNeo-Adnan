@@ -15,19 +15,44 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
+import java.util.Enumeration;
+import java.util.Locale;
+import java.util.regex.PatternSyntaxException;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONException;
+
+import com.google.gson.Gson;
+import dev.aldi.sayuti.editor.manage.LocalLibrariesUtil;
+import mod.hey.studios.project.proguard.ProguardHandler;
 
 import a.a.a.wq;
+import a.a.a.Lx;
+import a.a.a.jq;
 import dev.pranav.filepicker.FilePickerCallback;
 import dev.pranav.filepicker.FilePickerDialogFragment;
 import dev.pranav.filepicker.FilePickerOptions;
 import pro.sketchware.activities.main.fragments.projects.ProjectsFragment;
 import pro.sketchware.databinding.ProgressMsgBoxBinding;
 import pro.sketchware.utility.FileUtil;
+import pro.sketchware.utility.FilePathUtil;
+import mod.hey.studios.project.ProjectSettings;
+import mod.hey.studios.build.BuildSettings;
+import pro.sketchware.activities.editor.gradle.CustomGradleBuildManager;
 import pro.sketchware.utility.SketchwareUtil;
 
 /**
@@ -91,7 +116,7 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
     // ── Version ───────────────────────────────────────────────────────────────
 
     /** Bumped here so the verbose log header always shows the correct version. */
-    static final String IMPORTER_VERSION = "1.0.1";
+    static final String IMPORTER_VERSION = "2.0.0";
 
     private static final String TAG = "ASProjectImporter";
 
@@ -128,6 +153,7 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
     private final String       zipFilePath;
     private final Callback     callback;
     private final ImportLogger logger;       // never null — disabled logger has zero overhead
+    private final ImportOptions options;
 
     /** Temp directory where ZIP is extracted. Deleted after import regardless of outcome. */
     private File tempDir;
@@ -221,16 +247,23 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
 
     /** Original constructor. Verbose logging is disabled. Existing callers unaffected. */
     public ASProjectImporter(Context context, String zipFilePath, Callback callback) {
-        this(context, zipFilePath, ImportLogger.create(false), callback);
+        this(context, zipFilePath, ImportLogger.create(false), new ImportOptions(), callback);
     }
 
-    /** Full constructor — pass a configured {@link ImportLogger} for verbose mode. */
+    /** Full constructor — pass a configured logger while retaining default conversion settings. */
     public ASProjectImporter(Context context, String zipFilePath,
                              ImportLogger logger, Callback callback) {
-        this.context     = context.getApplicationContext();
+        this(context, zipFilePath, logger, new ImportOptions(), callback);
+    }
+
+    /** Full constructor used by the dedicated Import UI. */
+    public ASProjectImporter(Context context, String zipFilePath, ImportLogger logger,
+                             ImportOptions options, Callback callback) {
+        this.context = context.getApplicationContext();
         this.zipFilePath = zipFilePath;
-        this.callback    = callback;
-        this.logger      = logger;
+        this.callback = callback;
+        this.logger = logger == null ? ImportLogger.create(false) : logger;
+        this.options = options == null ? new ImportOptions() : options.copy();
     }
 
     // ── AsyncTask lifecycle ───────────────────────────────────────────────────
@@ -240,6 +273,10 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         // Open the logger session here, on the background thread, so timing is
         // accurate from the very first operation.
         logger.start("AS Import", context, zipFilePath, IMPORTER_VERSION);
+        logger.info("Convert Java to Blocks: " + options.convertJavaToBlocks);
+        logger.info("Convert XML layouts to visual views: " + options.convertXmlLayoutsToVisualViews);
+        logger.info("Extract custom methods as MoreBlocks: " + options.extractCustomMethodsToMoreBlocks);
+        logger.info("Import Gradle dependencies: " + options.importGradleDependencies);
         try {
             return runPipeline();
         } catch (Exception e) {
@@ -355,11 +392,25 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         GradleParser gradleParser = new GradleParser();
         ParsedGradle gradle = gradleParser.parse(appModuleDir);
 
-        if ("com.imported.project".equals(gradle.applicationId)
-                && !manifest.packageName.isEmpty()) {
-            gradle.applicationId = manifest.packageName;
-            logger.warning("applicationId not found in gradle — using manifest package: "
-                    + manifest.packageName);
+        if ("com.imported.project".equals(gradle.applicationId)) {
+            // AGP's default applicationId follows the Gradle namespace on modern
+            // projects. Prefer that over a legacy manifest package that can differ.
+            String fallbackPackage = gradle.namespace == null ? "" : gradle.namespace.trim();
+            String fallbackSource = "Gradle namespace";
+            if (fallbackPackage.isEmpty()) {
+                fallbackPackage = manifest.packageName == null ? "" : manifest.packageName.trim();
+                fallbackSource = "manifest package";
+            }
+            if (!fallbackPackage.isEmpty()) {
+                gradle.applicationId = fallbackPackage;
+                logger.warning("applicationId not found as a literal in Gradle; using "
+                        + fallbackSource + ": " + fallbackPackage);
+            }
+        }
+        if (gradle.applicationId == null || !gradle.applicationId.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+")) {
+            logger.error("The resolved applicationId is not a valid Java/Android package name: " + gradle.applicationId, null, null);
+            logger.stepDone(false);
+            return failure("Invalid applicationId '" + gradle.applicationId + "'. Use a valid dotted Android package name before importing.");
         }
         logger.info("Application ID  : " + gradle.applicationId);
         logger.info("Version         : " + gradle.versionCode + " / " + gradle.versionName);
@@ -423,14 +474,14 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
                     + (cs.associatedLayout != null ? "  [layout: " + cs.associatedLayout + "]" : ""));
 
             if (cs.kind == ClassifiedSource.Kind.SERVICE || cs.kind == ClassifiedSource.Kind.RECEIVER) {
-                logger.warning(cs.kind.name() + " detected and copied as Java: " + cs.simpleClassName
-                        + " — its <" + (cs.kind == ClassifiedSource.Kind.SERVICE ? "service" : "receiver")
-                        + "> entry (exported flag, permission, intent-filters) is NOT auto-registered yet"
-                        + " and must be added manually in Manifest Manager.");
+                logger.info(cs.kind.name() + " source detected: " + cs.simpleClassName
+                        + " — manifest declaration and nested metadata/intent-filters are copied through"
+                        + " Injection/androidmanifest/app_components.txt. Check references to external Android Studio"
+                        + " classes because class relocation/package mapping may still need review.");
             } else if (cs.kind == ClassifiedSource.Kind.PROVIDER) {
-                logger.warning("PROVIDER detected and copied as Java: " + cs.simpleClassName
-                        + " — Sketchware Neo has no dedicated provider-registration list;"
-                        + " its <provider> entry must be added manually.");
+                logger.info("PROVIDER source detected: " + cs.simpleClassName
+                        + " — provider declaration is preserved through app_components.txt;"
+                        + " review authority values for applicationId placeholders.");
             } else if (cs.kind == ClassifiedSource.Kind.APPLICATION) {
                 logger.warning("Custom Application class detected: " + cs.simpleClassName
                         + " — copied as Java only. Sketchware Neo's own Application class is fixed and was"
@@ -450,8 +501,13 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         logger.info("layout dir: " + baseLayoutDir.getAbsolutePath()
                 + (baseLayoutDir.exists() ? "" : "  [NOT FOUND]"));
 
-        List<LayoutImporter.ImportedLayout> layouts =
-                layoutImporter.importLayouts(baseLayoutDir, sources, manifest, manifest.appTheme);
+        List<LayoutImporter.ImportedLayout> layouts;
+        if (options.convertXmlLayoutsToVisualViews) {
+            layouts = layoutImporter.importLayouts(baseLayoutDir, sources, manifest, manifest.appTheme);
+        } else {
+            layouts = layoutImporter.createEmptyScreens(sources, manifest);
+            logger.info("XML conversion disabled by user; registered blank activity shells instead of guessing XML widgets.");
+        }
         String fileData     = layoutImporter.buildFileData(layouts);
         String viewData     = layoutImporter.buildViewData(layouts);
         String viewRootData = layoutImporter.buildViewRootData(layouts);
@@ -500,7 +556,14 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         writeInput.versionName   = gradle.versionName;
         writeInput.minSdk        = gradle.minSdk;
         writeInput.targetSdk     = gradle.targetSdk;
+        writeInput.compileSdk    = gradle.compileSdk;
         writeInput.hasKotlin     = gradle.hasKotlin;
+        writeInput.viewBindingEnabled = gradle.viewBindingEnabled;
+        writeInput.customJavaEnabled = !options.convertJavaToBlocks;
+        writeInput.multiDexEnabled = gradle.multiDexEnabled;
+        writeInput.javaVersion = supportedJavaVersion(gradle.javaVersion);
+        writeInput.proguardEnabled = gradle.minifyEnabledInRelease;
+        writeInput.proguardRules = readImportedProguardRules(gradle, appModuleDir);
         writeInput.fileData      = fileData;
         writeInput.viewData      = viewData;
         writeInput.viewRootData  = viewRootData;
@@ -508,7 +571,12 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         writeInput.manifestContent = buildCustomManifest(manifest);
         writeInput.launcherFileName = resolveLauncherFileName(sources, manifest);
         writeInput.permissionsJson  = buildPermissionsJson(manifest.permissions);
-        writeInput.logicData        = buildFullLogicData(sources, baseLayoutDir);
+        writeInput.manifestAttributesJson = buildManifestAttributesJson(manifest, sources);
+        writeInput.activityComponentsJson = buildActivityComponentsJson(manifest, sources);
+        writeInput.appComponentsXml = buildApplicationComponentsXml(manifest);
+        writeInput.logicData        = options.convertJavaToBlocks
+                ? buildFullLogicData(sources, layouts, options.extractCustomMethodsToMoreBlocks)
+                : "";
 
         logger.info("Launcher screen (Injection/androidmanifest/activity_launcher.txt) : "
                 + writeInput.launcherFileName);
@@ -530,6 +598,12 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         String filesPath = dataPath + "/files";
         logger.info("Generated sc_id : " + scId);
         logger.info("Data path       : " + dataPath);
+        try {
+            applyImportedBuildSettings(scId, gradle, writeInput, appModuleDir, detection.projectRoot);
+        } catch (Exception e) {
+            logger.warning("Some Gradle settings could not be mapped to Sketchware Neo: " + e.getMessage());
+            Log.w(TAG, "Could not fully apply imported Gradle settings", e);
+        }
         logger.stepDone(true);
 
         // ── [10] Resource copy ────────────────────────────────────────────────
@@ -591,17 +665,22 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         }
         logger.stepDone(true);
 
+        // Preserve the original XML resources and build metadata as reference files.
+        // Visual conversion is intentionally conservative; retaining the original XML
+        // prevents unsupported attributes/styles/layout constructs from being lost.
+        preserveOriginalProjectReferences(detection.projectRoot, appModuleDir, srcMain, filesPath);
+
         // ── [11] Copy Java / Kotlin source files ──────────────────────────────
         progress("Copying source files...");
         logger.step(11, "Copy Source Files");
-        copySourceFiles(sources, filesPath + "/java");
-        if (kotlinSrc.exists() && !kotlinSrc.equals(javaSrc)) {
-            copyAllSourceFiles(kotlinSrc, filesPath + "/java");
-            logger.info("Kotlin source directory also copied.");
-        }
-        int copiedSources = 0;
-        for (ClassifiedSource cs : sources) if (cs.file != null && cs.file.exists()) copiedSources++;
-        logger.info("Source files copied : " + copiedSources);
+        // Preserve the complete source tree for reference, then add only the files that
+        // Sketchware's own compiler paths can safely consume. When block conversion is
+        // selected, the original Activity must NOT be placed in files/java: Neo treats a
+        // root-level Activity.java there as an override of the Activity generated from blocks.
+        int copiedSources = copySourcesForSketchware(javaSrc, kotlinSrc, filesPath, scId,
+                sources, manifest.packageName, gradle.applicationId);
+        preserveOriginalGradleConfiguration(detection.projectRoot, appModuleDir, filesPath);
+        logger.info("Java/Kotlin source files preserved/reference-copied : " + copiedSources);
         logger.stepDone(true);
         Log.d(TAG, "Source files copied: " + copiedSources);
 
@@ -625,21 +704,25 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
             boolean anyNativeContentCopied = false;
 
             // Prebuilt .so files, preserving ABI folders (arm64-v8a, armeabi-v7a, etc).
-            // NOTE: target folder name follows the spec (files/native_libs/), which
-            // differs from this importer's previous "jniLibs" naming — flagged as a
-            // naming mismatch against Sketchware Neo's own convention; this could not
-            // be confirmed or refuted from the files available during this audit
-            // (see AS_Importer_Deep_Audit_Report.md, Section 10) — verify before
-            // relying on this if native libs still don't load after import.
+            // Neo's own FilePathUtil.getPathNativelibs(sc_id) resolves to
+            // data/<id>/files/native_libs; preserve the ABI subdirectory names.
+            File nativeLibsDest = new File(filesPath + "/native_libs");
             File jniLibsSrc = new File(srcMain, "jniLibs");
             if (jniLibsSrc.exists()) {
                 progress("Copying prebuilt native libraries...");
-                copyDirectory(jniLibsSrc, new File(filesPath + "/native_libs"));
-                stats.jniLibs = countFiles(jniLibsSrc);
-                logger.info("Prebuilt native libs copied : " + stats.jniLibs);
+                copyDirectory(jniLibsSrc, nativeLibsDest);
+                stats.jniLibs += countFiles(jniLibsSrc);
+                logger.info("Prebuilt jniLibs copied : " + countFiles(jniLibsSrc));
                 anyNativeContentCopied = true;
             } else {
-                logger.info("No prebuilt jniLibs/ directory (expected if this module builds from source).");
+                logger.info("No prebuilt src/main/jniLibs/ directory found.");
+            }
+            File moduleLibsDir = new File(appModuleDir, "libs");
+            int moduleSharedLibraries = copySharedLibrariesOnly(moduleLibsDir, nativeLibsDest, moduleLibsDir);
+            if (moduleSharedLibraries > 0) {
+                stats.jniLibs += moduleSharedLibraries;
+                logger.info("Additional prebuilt .so files copied from app module libs/: " + moduleSharedLibraries);
+                anyNativeContentCopied = true;
             }
 
             // Source-level JNI: only copy actual source, never build/.cxx/intermediates output.
@@ -649,14 +732,18 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
                 File jniDest = new File(filesPath + "/jni");
                 copyJniSourceOnly(jniSourceDir, jniDest);
                 int jniSourceFileCount = countJniSourceFiles(jniSourceDir);
-                logger.info("JNI source files copied : " + jniSourceFileCount
-                        + " (" + gradle.nativeBuildSystem + ") from " + jniSourceDir.getAbsolutePath());
+                logger.info("JNI/native support files copied : " + countFiles(jniSourceDir)
+                        + " total file(s), including " + jniSourceFileCount
+                        + " C/C++ source/header/build files (" + gradle.nativeBuildSystem + ") from "
+                        + jniSourceDir.getAbsolutePath());
+                ensureNeoNativeCmakeBuild(jniDest, appModuleDir);
                 anyNativeContentCopied = true;
 
                 if (gradle.nativeBuildSystem == ParsedGradle.NativeBuildSystem.NDK_BUILD) {
-                    logger.warning("This module uses Android.mk/ndk-build. Sketchware Neo's C/C++ Manager"
-                            + " is CMake-based — Android.mk was copied as reference but will need to be"
-                            + " ported to a CMakeLists.txt manually before it will compile.");
+                    logger.warning("This module uses Android.mk/ndk-build. Neo's on-device NativeCompiler"
+                            + " invokes CMake directly and does not run ndk-build; Android.mk/Application.mk and"
+                            + " all neighboring support files were preserved, but the build needs a verified"
+                            + " CMakeLists.txt/port before native compilation can succeed.");
                 }
             } else {
                 logger.info("No JNI source directory found (expected if this module only ships prebuilt .so files).");
@@ -675,14 +762,27 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         // ── [14] Copy local .aar / .jar ───────────────────────────────────────
         logger.step(14, "Copy Local Libraries");
         if (!gradle.localLibPaths.isEmpty()) {
-            progress("Copying local libraries...");
+            progress("Copying and registering local libraries...");
             String localLibDest = filesPath + "/libs";
             FileUtil.makeDir(localLibDest);
             for (String localLibPath : gradle.localLibPaths) {
                 File libFile = new File(localLibPath);
-                FileUtil.copyFile(localLibPath, localLibDest + "/" + libFile.getName());
-                logger.info("Copied : " + libFile.getName());
-                Log.d(TAG, "Copied local lib: " + libFile.getName());
+                File referenceCopy = new File(localLibDest, libFile.getName());
+                try {
+                    java.nio.file.Files.copy(libFile.toPath(), referenceCopy.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    logger.info("Preserved original local library: " + libFile.getName());
+                } catch (Exception e) {
+                    logger.warning("Could not preserve local library archive " + libFile.getName() + ": " + e.getMessage());
+                }
+                try {
+                    String registeredName = installLocalLibraryArchive(scId, libFile, filesPath);
+                    if (registeredName != null) logger.info("Registered local library '" + registeredName + "' in data/local_library.");
+                    else logger.warning("Local library " + libFile.getName() + " is preserved as a reference, but its Neo local-library registration failed.");
+                } catch (Exception e) {
+                    logger.warning("Could not register local library " + libFile.getName() + ": " + e.getMessage());
+                    Log.w(TAG, "Local library import failed: " + libFile.getName(), e);
+                }
             }
             logger.stepDone(true);
         } else {
@@ -754,8 +854,11 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
             for (String permission : manifest.permissions) {
                 logger.info("  uses-permission: " + permission);
             }
-            logger.warning(manifest.permissions.size() + " permission(s) found in manifest — "
-                    + "must be added manually in Manifest Manager (no auto-registration path yet).");
+            logger.info(manifest.permissions.size() + " standard permission(s) will be written to data/permission "
+                    + "and injected with their supported attributes using Neo's attributes.json mechanism.");
+        }
+        if (manifest.unsupportedManifestItems != null) {
+            for (String item : manifest.unsupportedManifestItems) logger.warning("Manifest item needs manual review: " + item);
         }
 
         if (manifest.applicationClassName != null) {
@@ -799,6 +902,81 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
 
     // ── Source file copy ──────────────────────────────────────────────────────
 
+    private void preserveOriginalProjectReferences(File projectRoot, File appModuleDir,
+                                                    File srcMain, String filesPath) {
+        File referenceRoot = new File(filesPath, "android_studio_original");
+        int copied = 0;
+        File resDir = new File(srcMain, "res");
+        if (resDir.isDirectory()) {
+            copied += copyXmlReferencesRecursively(resDir, resDir,
+                    new File(referenceRoot, "res"));
+        }
+        copied += copyReferenceFile(new File(srcMain, "AndroidManifest.xml"), referenceRoot);
+        copied += copyReferenceFile(new File(appModuleDir, "build.gradle"), new File(referenceRoot, "app_build"));
+        copied += copyReferenceFile(new File(appModuleDir, "build.gradle.kts"), new File(referenceRoot, "app_build"));
+        copied += copyReferenceFile(new File(projectRoot, "settings.gradle"), new File(referenceRoot, "root_build"));
+        copied += copyReferenceFile(new File(projectRoot, "settings.gradle.kts"), new File(referenceRoot, "root_build"));
+        copied += copyReferenceFile(new File(projectRoot, "build.gradle"), new File(referenceRoot, "root_build"));
+        copied += copyReferenceFile(new File(projectRoot, "build.gradle.kts"), new File(referenceRoot, "root_build"));
+        copied += copyReferenceFile(new File(projectRoot, "gradle.properties"), new File(referenceRoot, "root_build"));
+        copied += copyReferenceFile(new File(new File(projectRoot, "gradle"), "libs.versions.toml"),
+                new File(referenceRoot, "root_build/gradle"));
+        logger.info("Preserved " + copied + " original XML/build reference file(s) under files/android_studio_original/.");
+    }
+
+    private int copyXmlReferencesRecursively(File current, File sourceRoot, File targetRoot) {
+        if (current == null || !current.exists()) return 0;
+        int copied = 0;
+        File[] children = current.listFiles();
+        if (children == null) return 0;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                copied += copyXmlReferencesRecursively(child, sourceRoot, targetRoot);
+            } else if (child.isFile() && child.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) {
+                try {
+                    String relative = sourceRoot.toPath().relativize(child.toPath()).toString();
+                    File out = new File(targetRoot, relative);
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.mkdirs() && !parent.isDirectory()) {
+                        throw new IOException("Could not create " + parent.getAbsolutePath());
+                    }
+                    java.nio.file.Files.copy(child.toPath(), out.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    copied++;
+                } catch (Exception e) {
+                    logger.warning("Could not preserve original XML reference " + child.getName() + ": " + e.getMessage());
+                }
+            }
+        }
+        return copied;
+    }
+
+    private int copyReferenceFile(File source, File targetDir) {
+        if (source == null || !source.isFile()) return 0;
+        try {
+            if (!targetDir.exists() && !targetDir.mkdirs() && !targetDir.isDirectory()) {
+                throw new IOException("Could not create " + targetDir.getAbsolutePath());
+            }
+            java.nio.file.Files.copy(source.toPath(), new File(targetDir, source.getName()).toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return 1;
+        } catch (Exception e) {
+            logger.warning("Could not preserve original reference " + source.getName() + ": " + e.getMessage());
+            return 0;
+        }
+    }
+
+    private int countSourceFiles(File dir) {
+        if (dir == null || !dir.isDirectory()) return 0;
+        int count = 0;
+        File[] children = dir.listFiles();
+        if (children == null) return 0;
+        for (File child : children) {
+            if (child.isDirectory()) count += countSourceFiles(child);
+            else if (child.isFile() && (child.getName().endsWith(".java") || child.getName().endsWith(".kt"))) count++;
+        }
+        return count;
+    }
+
     private void copySourceFiles(List<ClassifiedSource> sources, String javaDestPath) {
         for (ClassifiedSource cs : sources) {
             if (cs.file == null || !cs.file.exists()) continue;
@@ -807,6 +985,199 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
             FileUtil.makeDir(destDir);
             FileUtil.copyFile(cs.file.getAbsolutePath(), destDir + "/" + cs.file.getName());
         }
+    }
+
+    private int copySourcesForSketchware(File javaSrc, File kotlinSrc, String filesPath, String scId,
+                                         List<ClassifiedSource> sources, String manifestPackage,
+                                         String applicationId) {
+        File referenceRoot = new File(filesPath, "android_studio_original/source");
+        if (javaSrc != null && javaSrc.isDirectory()) copyDirectory(javaSrc, new File(referenceRoot, "java"));
+        if (kotlinSrc != null && kotlinSrc.isDirectory() && !kotlinSrc.equals(javaSrc)) {
+            copyDirectory(kotlinSrc, new File(referenceRoot, "kotlin"));
+        }
+
+        Map<String, ClassifiedSource> byAbsolutePath = new LinkedHashMap<>();
+        Map<String, String> activityNameMap = new LinkedHashMap<>();
+        Map<String, String> layoutNameMap = new LinkedHashMap<>();
+        if (sources != null) for (ClassifiedSource source : sources) {
+            if (source == null || source.file == null) continue;
+            try { byAbsolutePath.put(source.file.getCanonicalPath(), source); }
+            catch (Exception ignored) { byAbsolutePath.put(source.file.getAbsolutePath(), source); }
+            if (source.kind == ClassifiedSource.Kind.ACTIVITY) {
+                String fileName = source.sketchwareFileName;
+                if (fileName == null || fileName.trim().isEmpty()) fileName = SourceClassifier.classNameToSketchwareFileName(source.simpleClassName);
+                String generated = ProjectFileBean.getActivityName(fileName);
+                activityNameMap.put(source.simpleClassName, generated);
+                if (source.associatedLayout != null && !source.associatedLayout.trim().isEmpty()) {
+                    layoutNameMap.put(source.associatedLayout, fileName);
+                }
+            }
+        }
+
+        File javaDestination = new File(filesPath, "java");
+        if (!javaDestination.exists()) javaDestination.mkdirs();
+        File customJavaDirectory = new File(wq.b(scId), "custom_java");
+        if (!options.convertJavaToBlocks && !customJavaDirectory.exists()) customJavaDirectory.mkdirs();
+
+        java.util.List<File> allFiles = new ArrayList<>();
+        collectSourceFiles(javaSrc, allFiles);
+        if (kotlinSrc != null && kotlinSrc.isDirectory() && !kotlinSrc.equals(javaSrc)) collectSourceFiles(kotlinSrc, allFiles);
+        int copied = 0;
+        Map<String, String> firstPackageByName = new HashMap<>();
+        for (File file : allFiles) {
+            ClassifiedSource classified = null;
+            try { classified = byAbsolutePath.get(file.getCanonicalPath()); }
+            catch (Exception ignored) { classified = byAbsolutePath.get(file.getAbsolutePath()); }
+            boolean activity = classified != null && classified.kind == ClassifiedSource.Kind.ACTIVITY;
+
+            if (activity) {
+                if (options.convertJavaToBlocks) {
+                    // The real Activity logic is now data/logic. Keep the original source
+                    // only under android_studio_original so Neo's Java override hook cannot
+                    // shadow the generated Activity and make imported blocks appear inert.
+                    continue;
+                }
+                if (file.getName().endsWith(".kt")) {
+                    logger.warning("Kotlin Activity " + file.getName() + " was preserved under android_studio_original but not installed as custom Java: the custom_java override only accepts Java source.");
+                    continue;
+                }
+                String logicalName = classified.sketchwareFileName;
+                if (logicalName == null || logicalName.trim().isEmpty()) logicalName = SourceClassifier.classNameToSketchwareFileName(classified.simpleClassName);
+                String outputClass = ProjectFileBean.getActivityName(logicalName);
+                String adapted;
+                try {
+                    adapted = adaptActivitySource(readUtf8(file), classified, activityNameMap, layoutNameMap,
+                            manifestPackage, applicationId, outputClass);
+                } catch (Exception e) {
+                    logger.warning("Could not adapt Activity source " + file.getName() + " for Neo custom_java: " + e.getMessage());
+                    continue;
+                }
+                File target = new File(customJavaDirectory, outputClass + ".java");
+                try {
+                    writeUtf8(target, adapted);
+                    copied++;
+                    logger.info("Installed Activity override at custom_java/" + target.getName());
+                } catch (Exception e) {
+                    logger.warning("Could not write custom Java Activity " + target.getName() + ": " + e.getMessage());
+                }
+                continue;
+            }
+
+            // Neo's Java manager and its import convention expose files directly from
+            // data/<id>/files/java. Package identity remains inside each source's package
+            // declaration; do not invent package-name directory trees here.
+            File target = new File(javaDestination, file.getName());
+            if (target.exists()) {
+                try {
+                    if (java.util.Arrays.equals(java.nio.file.Files.readAllBytes(target.toPath()),
+                            java.nio.file.Files.readAllBytes(file.toPath()))) continue;
+                } catch (Exception ignored) { }
+                String packageName = classified == null ? "" : classified.packageName;
+                String previousPackage = firstPackageByName.get(file.getName());
+                logger.warning("Name collision for source file " + file.getName() + " from package '" + packageName
+                        + "'" + (previousPackage == null ? "" : " (first package '" + previousPackage + "')")
+                        + ". Original copies are preserved under files/android_studio_original/source; only the first basename can be installed in Neo's flat files/java folder.");
+                continue;
+            }
+            try {
+                java.nio.file.Files.copy(file.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                firstPackageByName.put(file.getName(), classified == null ? "" : classified.packageName);
+                copied++;
+            } catch (Exception e) {
+                logger.warning("Could not install support source " + file.getName() + ": " + e.getMessage());
+            }
+        }
+        if (!options.convertJavaToBlocks) {
+            logger.info("custom_java is enabled for Activities because Java-to-block conversion is disabled.");
+        }
+        return copied;
+    }
+
+    private void collectSourceFiles(File root, List<File> out) {
+        if (root == null || !root.isDirectory()) return;
+        File[] children = root.listFiles();
+        if (children == null) return;
+        java.util.Arrays.sort(children, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        for (File child : children) {
+            if (child.isDirectory()) collectSourceFiles(child, out);
+            else if (child.isFile() && (child.getName().endsWith(".java") || child.getName().endsWith(".kt"))) out.add(child);
+        }
+    }
+
+    private String readUtf8(File file) throws IOException {
+        return new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+    }
+
+    private String adaptActivitySource(String source, ClassifiedSource activity,
+                                       Map<String, String> activityNameMap, Map<String, String> layoutNameMap,
+                                       String manifestPackage, String applicationId, String outputClassName) {
+        String adapted = source;
+        // Rename screen class references so intent targets refer to Neo's generated Activity names.
+        if (activityNameMap != null) for (Map.Entry<String, String> mapping : activityNameMap.entrySet()) {
+            if (mapping.getKey() == null || mapping.getValue() == null) continue;
+            String oldName = mapping.getKey();
+            String newName = mapping.getValue();
+            if (!oldName.equals(newName)) {
+                adapted = adapted.replaceAll("\\b" + Pattern.quote(oldName) + "\\b",
+                        java.util.regex.Matcher.quoteReplacement(newName));
+            }
+        }
+        // Activity classes can point at layout names that differ from Sketchware's
+        // screen ids. Fix both direct R.layout references and generated ViewBinding names.
+        if (layoutNameMap != null) for (Map.Entry<String, String> mapping : layoutNameMap.entrySet()) {
+            String oldLayout = mapping.getKey();
+            String newLayout = mapping.getValue();
+            if (oldLayout == null || newLayout == null || oldLayout.equals(newLayout)) continue;
+            adapted = adapted.replaceAll("R\\.layout\\." + Pattern.quote(oldLayout) + "\\b",
+                    java.util.regex.Matcher.quoteReplacement("R.layout." + newLayout));
+            String oldBinding = bindingClassForLayout(oldLayout);
+            String newBinding = bindingClassForLayout(newLayout);
+            if (!oldBinding.equals(newBinding)) {
+                adapted = adapted.replaceAll("\\b" + Pattern.quote(oldBinding) + "\\b",
+                        java.util.regex.Matcher.quoteReplacement(newBinding));
+            }
+        }
+        String originalPackage = activity == null ? "" : activity.packageName;
+        String targetPackage = applicationId == null ? "" : applicationId.trim();
+        if (!targetPackage.isEmpty() && !targetPackage.equals(originalPackage)) {
+            // Rewrite to the project's generated Activity package. Add a wildcard import
+            // for the original package to retain access to same-package helper classes.
+            java.util.regex.Pattern packagePattern = java.util.regex.Pattern.compile("(?m)^\\s*package\\s+[A-Za-z0-9_.]+\\s*;?");
+            java.util.regex.Matcher packageMatcher = packagePattern.matcher(adapted);
+            if (packageMatcher.find()) {
+                adapted = packageMatcher.replaceFirst(java.util.regex.Matcher.quoteReplacement("package " + targetPackage + ";"));
+                if (originalPackage != null && !originalPackage.isEmpty() && !originalPackage.equals(targetPackage)) {
+                    adapted = adapted.replaceFirst("(?m)^package " + Pattern.quote(targetPackage) + ";\\s*",
+                            java.util.regex.Matcher.quoteReplacement("package " + targetPackage + ";\\nimport " + originalPackage + ".*;\\n"));
+                }
+            } else {
+                adapted = "package " + targetPackage + ";\\n" + adapted;
+                if (originalPackage != null && !originalPackage.isEmpty() && !originalPackage.equals(targetPackage)) {
+                    adapted = adapted.replaceFirst("(?m)^package " + Pattern.quote(targetPackage) + ";\\s*",
+                            java.util.regex.Matcher.quoteReplacement("package " + targetPackage + ";\\nimport " + originalPackage + ".*;\\n"));
+                }
+            }
+        }
+        // Ensure public class name equals the generated filename; mapping above already
+        // updates all original Activity simple-name references in this source.
+        if (activity != null && activity.simpleClassName != null && !activity.simpleClassName.equals(outputClassName)) {
+            adapted = adapted.replaceAll("\\b" + Pattern.quote(activity.simpleClassName) + "\\b",
+                    java.util.regex.Matcher.quoteReplacement(outputClassName));
+        }
+        return adapted;
+    }
+
+    private String bindingClassForLayout(String layoutName) {
+        if (layoutName == null) return "Binding";
+        StringBuilder out = new StringBuilder();
+        boolean upper = true;
+        for (int i = 0; i < layoutName.length(); i++) {
+            char c = layoutName.charAt(i);
+            if (!Character.isLetterOrDigit(c)) { upper = true; continue; }
+            out.append(upper ? Character.toUpperCase(c) : c);
+            upper = false;
+        }
+        return out.append("Binding").toString();
     }
 
     private void copyAllSourceFiles(File srcRoot, String destPath) {
@@ -873,24 +1244,22 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
     }
 
     /**
-     * Copies only real JNI source + build-script files (never build/.cxx/
-     * intermediates output, since those are computed from this same source
-     * and would just be dead weight — or worse, stale/wrong once re-built
-     * inside Sketchware Neo).
+     * Copies the native source tree without filtering by extension. Real native builds
+     * frequently depend on static archives (.a), pkg-config/libtool metadata (.pc/.la),
+     * generated configuration headers, scripts and extensionless files beside .cpp/.h.
+     * Only known build output / VCS directories are excluded.
      */
     private void copyJniSourceOnly(File src, File dest) {
         FileUtil.makeDir(dest.getAbsolutePath());
         File[] files = src.listFiles();
         if (files == null) return;
-
         for (File f : files) {
             if (f.isDirectory()) {
                 String name = f.getName();
-                if (name.equals("build") || name.equals(".cxx") || name.equals("intermediates")) {
-                    continue; // generated output — never a real source directory under cpp/jni
-                }
+                if (name.equals("build") || name.equals(".cxx") || name.equals("intermediates")
+                        || name.equals(".git") || name.equals(".gradle")) continue;
                 copyJniSourceOnly(f, new File(dest, name));
-            } else if (isJniSourceFile(f)) {
+            } else if (f.isFile()) {
                 FileUtil.copyFile(f.getAbsolutePath(), dest.getAbsolutePath() + "/" + f.getName());
             }
         }
@@ -924,59 +1293,491 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         return count;
     }
 
+    /**
+     * Preserve the source project's Gradle configuration verbatim for recovery/review.
+     * Sketchware's build has its own generated project root, so blindly replacing its
+     * app_build.gradle with an Android Studio script is unsafe (it may rely on catalog
+     * aliases, included builds, product flavors, plugin management or extra modules).
+     * Supported SDK/dependency settings are mapped separately; these originals ensure
+     * the importer never discards custom Gradle logic it could not safely translate.
+     */
+    private void preserveOriginalGradleConfiguration(File projectRoot, File appModuleDir, String filesPath) {
+        if (projectRoot == null || !projectRoot.isDirectory()) return;
+        File outRoot = new File(filesPath, "android_studio_original/gradle_project");
+        java.util.LinkedHashSet<File> preserved = new java.util.LinkedHashSet<>();
+        String[] rootFiles = {"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+                "gradle.properties", "gradle/libs.versions.toml"};
+        for (String relative : rootFiles) {
+            File f = new File(projectRoot, relative);
+            if (f.isFile()) preserved.add(f);
+        }
+        String[] rootDirs = {"gradle", "buildSrc", "build-logic"};
+        for (String relative : rootDirs) {
+            File f = new File(projectRoot, relative);
+            if (f.isDirectory()) collectPreservedBuildFiles(f, preserved, 0);
+        }
+        if (appModuleDir != null && appModuleDir.isDirectory()) {
+            String[] appFiles = {"build.gradle", "build.gradle.kts", "gradle.properties", "proguard-rules.pro",
+                    "consumer-rules.pro", "CMakeLists.txt", "Android.mk", "Application.mk"};
+            for (String relative : appFiles) {
+                File f = new File(appModuleDir, relative);
+                if (f.isFile()) preserved.add(f);
+            }
+        }
+        int copied = 0;
+        for (File source : preserved) {
+            try {
+                String relative = projectRoot.toURI().relativize(source.toURI()).getPath();
+                if (relative == null || relative.isEmpty() || relative.startsWith("../")) {
+                    relative = (appModuleDir != null && source.getAbsolutePath().startsWith(appModuleDir.getAbsolutePath())
+                            ? "app_module/" + source.getName() : "external/" + source.getName());
+                }
+                File dest = new File(outRoot, relative);
+                File parent = dest.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) continue;
+                java.nio.file.Files.copy(source.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                copied++;
+            } catch (Exception e) {
+                logger.warning("Could not preserve original Gradle file " + source.getAbsolutePath() + ": " + e.getMessage());
+            }
+        }
+        logger.info("Preserved " + copied + " original Gradle/configuration file(s) under files/android_studio_original/gradle_project/");
+        if (copied > 0) {
+            logger.warning("Review files/android_studio_original/gradle_project/: the runnable Neo Custom Gradle is a safe translated build, not a verbatim replacement for all Android Studio plugin/flavor/convention-plugin logic.");
+        }
+    }
+
+    private void collectPreservedBuildFiles(File directory, Set<File> result, int depth) {
+        if (depth > 12) return;
+        File[] children = directory.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            String name = child.getName();
+            if (child.isDirectory()) {
+                if (name.equals(".git") || name.equals(".gradle") || name.equals("build") || name.equals(".idea")) continue;
+                collectPreservedBuildFiles(child, result, depth + 1);
+            } else if (child.isFile()) {
+                String lower = name.toLowerCase(Locale.ROOT);
+                if (lower.endsWith(".gradle") || lower.endsWith(".gradle.kts")
+                        || lower.endsWith(".properties") || lower.endsWith(".toml")
+                        || lower.endsWith(".kt") || lower.endsWith(".java")
+                        || lower.equals("manifest.json")) {
+                    result.add(child);
+                }
+            }
+        }
+    }
+
+    /**
+     * Copies only prebuilt ELF shared libraries while preserving relative ABI paths.
+     * The caller chooses the source subtree so unrelated AAR/JAR files aren't copied.
+     */
+    private int copySharedLibrariesOnly(File source, File destination, File relativeRoot) {
+        if (source == null || !source.isDirectory()) return 0;
+        File[] files = source.listFiles();
+        if (files == null) return 0;
+        int copied = 0;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                copied += copySharedLibrariesOnly(file, destination, relativeRoot);
+            } else if (file.isFile() && file.getName().toLowerCase(Locale.ROOT).endsWith(".so")) {
+                try {
+                    String relative = relativeRoot.toURI().relativize(file.toURI()).getPath();
+                    File out = new File(destination, relative);
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) {
+                        logger.warning("Could not create native library directory: " + parent);
+                        continue;
+                    }
+                    java.nio.file.Files.copy(file.toPath(), out.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    copied++;
+                    if (!relative.matches("(?i).*(armeabi|armeabi-v7a|arm64-v8a|x86|x86_64)/[^/]+\\.so$")) {
+                        logger.warning("Prebuilt .so has no recognizable ABI directory: " + relative
+                                + ". Keep a valid ABI directory for Android packaging.");
+                    }
+                } catch (Exception e) {
+                    logger.warning("Could not copy native .so " + file.getName() + ": " + e.getMessage());
+                }
+            }
+        }
+        return copied;
+    }
+
+    /**
+     * The on-device NativeCompiler invokes CMake directly on files/jni. If a project
+     * has source files but no CMakeLists at that root, provide a simple safe fallback.
+     * Original Android.mk/module-level CMake files remain preserved separately and are
+     * never silently treated as having been translated.
+     */
+    private void ensureNeoNativeCmakeBuild(File nativeRoot, File appModuleDir) {
+        if (nativeRoot == null || !nativeRoot.isDirectory()) return;
+        File cmake = new File(nativeRoot, "CMakeLists.txt");
+        if (cmake.isFile() && cmake.length() > 0) return;
+        if (!containsCompilableNativeSource(nativeRoot)) {
+            logger.warning("Native folder contains no .c/.cc/.cpp/.cxx source files. A .h/.hpp or .a file alone is not a compilable native target.");
+            return;
+        }
+        // Do not pretend we can translate a complex native build by globbing sources.
+        // A generic target silently drops the flags/dependencies encoded by ndk-build,
+        // CMake fragments, pkg-config/Libtool metadata and static archives; that would
+        // create a predictably broken build for many real projects.
+        File moduleLevelCmake = appModuleDir == null ? null : new File(appModuleDir, "CMakeLists.txt");
+        File cppModuleCmake = appModuleDir == null ? null : new File(appModuleDir, "src/main/cpp/CMakeLists.txt");
+        if ((moduleLevelCmake != null && moduleLevelCmake.isFile())
+                || (cppModuleCmake != null && cppModuleCmake.isFile())) {
+            logger.warning("An original module-level CMakeLists.txt exists outside the selected files/jni root. It is preserved under files/android_studio_original; a generated generic target was not substituted because the original script may define project-specific paths/options. Port or relocate it to the files/jni root after reviewing paths.");
+            return;
+        }
+        if (containsNativeBuildScript(nativeRoot) || containsNativeStaticArchive(nativeRoot)
+                || containsNativeMetadata(nativeRoot)) {
+            logger.warning("Generic CMake fallback was not generated because this native tree contains Android.mk/other native build scripts, a static .a archive, pkg-config/Libtool metadata, or an unrecognized extensionless dependency file. All native files were preserved, but the build must be ported to a valid root CMakeLists.txt; Neo's on-device compiler does not execute ndk-build or parse .pc/.la metadata.");
+            return;
+        }
+        Set<String> loadLibraryNames = findSystemLoadLibraryNames(appModuleDir);
+        if (loadLibraryNames.size() > 1) {
+            logger.warning("Multiple different System.loadLibrary names were found " + loadLibraryNames
+                    + ". A single generic CMake target would be incorrect, so no fallback CMakeLists.txt was generated; provide a project-specific files/jni/CMakeLists.txt.");
+            return;
+        }
+        String targetName = loadLibraryNames.isEmpty()
+                ? "sketchware_imported_native" : loadLibraryNames.iterator().next();
+        if (!targetName.matches("[A-Za-z0-9_-]+")) {
+            logger.warning("The inferred System.loadLibrary target name '" + targetName
+                    + "' is not safe to place into a generated CMake target. Native sources were preserved; provide a project-specific files/jni/CMakeLists.txt.");
+            return;
+        }
+        String generated = "cmake_minimum_required(VERSION 3.22.1)\n"
+                + "project(sketchware_imported_native LANGUAGES C CXX)\n"
+                + "set(CMAKE_C_STANDARD 11)\nset(CMAKE_C_STANDARD_REQUIRED ON)\n"
+                + "set(CMAKE_CXX_STANDARD 17)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
+                + "file(GLOB_RECURSE IMPORTED_C CONFIGURE_DEPENDS \"${CMAKE_CURRENT_SOURCE_DIR}/*.c\")\n"
+                + "file(GLOB_RECURSE IMPORTED_CXX CONFIGURE_DEPENDS \"${CMAKE_CURRENT_SOURCE_DIR}/*.cc\" \"${CMAKE_CURRENT_SOURCE_DIR}/*.cpp\" \"${CMAKE_CURRENT_SOURCE_DIR}/*.cxx\")\n"
+                + "set(IMPORTED_SOURCES ${IMPORTED_C} ${IMPORTED_CXX})\n"
+                + "if(NOT IMPORTED_SOURCES)\n  message(FATAL_ERROR \"No C/C++ sources found in imported project\")\nendif()\n"
+                + "add_library(" + targetName + " SHARED ${IMPORTED_SOURCES})\n"
+                + "find_library(log-lib log)\n"
+                + "target_link_libraries(" + targetName + " PRIVATE ${log-lib})\n";
+        try {
+            writeUtf8(cmake, generated);
+            logger.warning("No CMakeLists.txt existed at the Neo native root; generated a minimal CMake build target '" + targetName
+                    + "' for discovered C/C++ sources. This does not translate Android.mk, pkg-config (.pc), Libtool (.la), project-specific compile flags or .a link dependencies.");
+            if (loadLibraryNames.isEmpty()) {
+                logger.warning("No literal System.loadLibrary(\"name\") was detected in Java/Kotlin sources. The generated target may need a matching loadLibrary call before its native methods can run.");
+            } else {
+                logger.info("Generated CMake target matches System.loadLibrary(\"" + targetName + "\").");
+            }
+            if (appModuleDir != null && new File(appModuleDir, "CMakeLists.txt").isFile()) {
+                logger.warning("The module-level CMakeLists.txt is retained under files/android_studio_original/gradle_project, but its module-relative paths were not assumed compatible with files/jni.");
+            }
+            if (containsNativeStaticArchive(nativeRoot)) {
+                logger.warning("Static .a archive(s) are preserved but not automatically linked. Add the required link directives and ABI-specific paths to the native CMakeLists.txt.");
+            }
+            if (containsNativeMetadata(nativeRoot)) {
+                logger.warning("Native .pc/.la/.cnf/.tl or extensionless helper files were preserved. CMake will not interpret them automatically; port relevant flags/dependency logic explicitly.");
+            }
+        } catch (Exception e) {
+            logger.warning("Could not write fallback native CMakeLists.txt: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Finds literal System.loadLibrary("name") calls in the source module. A generic
+     * CMake target should not choose an arbitrary name because Android's runtime loader
+     * uses that name to locate lib{name}.so. Multiple names require a project-specific
+     * CMake file rather than an unsafe single-target guess.
+     */
+    private Set<String> findSystemLoadLibraryNames(File appModuleDir) {
+        Set<String> names = new LinkedHashSet<>();
+        if (appModuleDir == null) return names;
+        File srcMain = new File(appModuleDir, "src/main");
+        collectSystemLoadLibraryNames(new File(srcMain, "java"), names, 0);
+        collectSystemLoadLibraryNames(new File(srcMain, "kotlin"), names, 0);
+        return names;
+    }
+
+    private void collectSystemLoadLibraryNames(File dir, Set<String> names, int depth) {
+        if (dir == null || depth > 32 || !dir.isDirectory()) return;
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        Pattern pattern = Pattern.compile("System\\s*\\.\\s*loadLibrary\\s*\\(\\s*\"([^\"]+)\"\\s*\\)");
+        for (File child : children) {
+            if (child.isDirectory()) {
+                String n = child.getName();
+                if (!"build".equals(n) && !".git".equals(n)) collectSystemLoadLibraryNames(child, names, depth + 1);
+            } else if (child.isFile() && (child.getName().endsWith(".java") || child.getName().endsWith(".kt"))) {
+                try {
+                    String source = new String(java.nio.file.Files.readAllBytes(child.toPath()), StandardCharsets.UTF_8);
+                    Matcher matcher = pattern.matcher(source);
+                    while (matcher.find()) names.add(matcher.group(1));
+                } catch (Exception e) {
+                    logger.warning("Could not inspect native library load calls in " + child.getName() + ": " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    private boolean containsCompilableNativeSource(File root) {
+        File[] files = root.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                if (file.getName().equals(".git") || file.getName().equals("build") || file.getName().equals(".cxx")) continue;
+                if (containsCompilableNativeSource(file)) return true;
+            } else {
+                String n = file.getName().toLowerCase(Locale.ROOT);
+                if (n.endsWith(".c") || n.endsWith(".cc") || n.endsWith(".cpp") || n.endsWith(".cxx")) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsNativeBuildScript(File root) {
+        File[] files = root.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                if (containsNativeBuildScript(file)) return true;
+            } else {
+                String n = file.getName().toLowerCase(Locale.ROOT);
+                if ("android.mk".equals(n) || "application.mk".equals(n) || "makefile".equals(n)
+                        || n.endsWith(".mk") || n.endsWith(".cmake") || "cmakelists.txt".equals(n)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsNativeStaticArchive(File root) {
+        File[] files = root.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                if (containsNativeStaticArchive(file)) return true;
+            } else if (file.getName().toLowerCase(Locale.ROOT).endsWith(".a")) return true;
+        }
+        return false;
+    }
+
+    private boolean containsNativeMetadata(File root) {
+        File[] files = root.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            if (file.isDirectory()) {
+                if (containsNativeMetadata(file)) return true;
+            } else {
+                String n = file.getName().toLowerCase(Locale.ROOT);
+                boolean ordinaryDocument = "readme".equals(n) || "license".equals(n) || "licence".equals(n)
+                        || "notice".equals(n) || "authors".equals(n) || "copying".equals(n) || "changelog".equals(n);
+                if (n.endsWith(".pc") || n.endsWith(".la") || n.endsWith(".cnf") || n.endsWith(".tl")
+                        || (!n.contains(".") && !ordinaryDocument)) return true;
+            }
+        }
+        return false;
+    }
+
+    private String installLocalLibraryArchive(String scId, File archive, String filesPath) throws Exception {
+        if (archive == null || !archive.isFile()) return null;
+        String archiveName = archive.getName();
+        String lower = archiveName.toLowerCase(Locale.ROOT);
+        boolean aar = lower.endsWith(".aar");
+        boolean jar = lower.endsWith(".jar");
+        if (!aar && !jar) return null;
+
+        String base = archiveName.substring(0, archiveName.lastIndexOf('.'))
+                .replaceAll("[^A-Za-z0-9_.-]", "_");
+        if (base.isEmpty()) base = "imported_library";
+        File libraryRoot = new File(FileUtil.getExternalStorageDir(), ".sketchware/libs/local_libs");
+        if (!libraryRoot.exists() && !libraryRoot.mkdirs() && !libraryRoot.isDirectory()) {
+            throw new IOException("Could not create Sketchware local-library directory: " + libraryRoot);
+        }
+        String name = base;
+        File target = new File(libraryRoot, name);
+        if (target.exists()) {
+            String digest = sha256File(archive).substring(0, 10);
+            name = base + "_import_" + digest;
+            target = new File(libraryRoot, name);
+            int suffix = 2;
+            while (target.exists()) target = new File(libraryRoot, name + "_" + suffix++);
+            name = target.getName();
+        }
+        if (!target.mkdirs() && !target.isDirectory()) throw new IOException("Could not create local library folder: " + target);
+
+        boolean success = false;
+        try {
+            if (jar) {
+                java.nio.file.Files.copy(archive.toPath(), new File(target, "classes.jar").toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                extractLocalArchiveSafely(archive, target);
+                int aarNativeCount = copySharedLibrariesOnly(new File(target, "jni"),
+                        new File(filesPath, "native_libs"), new File(target, "jni"));
+                if (aarNativeCount > 0) {
+                    logger.info("Copied " + aarNativeCount + " native .so file(s) from " + archiveName
+                            + " into files/native_libs/; ABI directories were preserved.");
+                }
+                File embeddedJar = new File(target, "classes.jar");
+                if (!embeddedJar.isFile()) createEmptyJar(embeddedJar);
+                File manifest = new File(target, "AndroidManifest.xml");
+                if (manifest.isFile()) {
+                    String packageName = extractManifestPackage(manifest);
+                    if (!packageName.isEmpty()) writeUtf8(new File(target, "config"), packageName);
+                }
+                File consumer = new File(target, "consumer-rules.pro");
+                File proguard = new File(target, "proguard.txt");
+                if (!proguard.isFile() && consumer.isFile()) {
+                    java.nio.file.Files.copy(consumer.toPath(), proguard.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+
+            ArrayList<HashMap<String, Object>> existing = LocalLibrariesUtil.getLocalLibraries(scId);
+            if (existing == null) existing = new ArrayList<>();
+            boolean alreadyAdded = false;
+            for (HashMap<String, Object> item : existing) {
+                if (item != null && name.equals(String.valueOf(item.get("name")))) { alreadyAdded = true; break; }
+            }
+            if (!alreadyAdded) existing.add(LocalLibrariesUtil.createLibraryMap(name, null));
+            LocalLibrariesUtil.rewriteLocalLibFile(scId, new Gson().toJson(existing));
+            LocalLibrariesUtil.clearCache();
+            success = true;
+            return name;
+        } finally {
+            if (!success) deleteRecursively(target);
+        }
+    }
+
+    private void extractLocalArchiveSafely(File archive, File destination) throws IOException {
+        String root = destination.getCanonicalPath() + File.separator;
+        long total = 0L;
+        int count = 0;
+        try (ZipFile zip = new ZipFile(archive)) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            byte[] buffer = new byte[8192];
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (++count > 50000) throw new IOException("Local archive contains too many entries.");
+                String name = entry.getName().replace('\\', '/');
+                if (name.startsWith("/") || name.matches("^[A-Za-z]:.*")) throw new IOException("Unsafe local archive entry: " + name);
+                for (String segment : name.split("/")) if ("..".equals(segment) || ".".equals(segment)) throw new IOException("Unsafe local archive path: " + name);
+                File output = new File(destination, name);
+                if (!output.getCanonicalPath().startsWith(root) && !output.getCanonicalPath().equals(destination.getCanonicalPath())) {
+                    throw new IOException("Local archive entry escapes library destination: " + name);
+                }
+                if (entry.isDirectory()) {
+                    if (!output.mkdirs() && !output.isDirectory()) throw new IOException("Cannot create local library directory: " + output);
+                    continue;
+                }
+                File parent = output.getParentFile();
+                if (parent != null && !parent.mkdirs() && !parent.isDirectory()) throw new IOException("Cannot create local library folder: " + parent);
+                try (InputStream input = zip.getInputStream(entry); FileOutputStream outputStream = new FileOutputStream(output)) {
+                    int read;
+                    while ((read = input.read(buffer)) != -1) {
+                        total += read;
+                        if (total > 512L * 1024L * 1024L) throw new IOException("Local archive expands beyond 512 MiB.");
+                        outputStream.write(buffer, 0, read);
+                    }
+                }
+            }
+        }
+    }
+
+    private void createEmptyJar(File file) throws IOException {
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("Cannot create directory for resource-only AAR.");
+        try (java.util.jar.JarOutputStream ignored = new java.util.jar.JarOutputStream(new FileOutputStream(file))) { }
+    }
+
+    private String extractManifestPackage(File manifest) {
+        try {
+            String xml = readUtf8(manifest);
+            java.util.regex.Matcher matcher = Pattern.compile("<manifest\\b[^>]*\\bpackage\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']", Pattern.CASE_INSENSITIVE).matcher(xml);
+            return matcher.find() ? matcher.group(1).trim() : "";
+        } catch (Exception e) {
+            logger.warning("Could not read package name from local AAR manifest: " + e.getMessage());
+            return "";
+        }
+    }
+
+    private String sha256File(File file) throws Exception {
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+        }
+        StringBuilder result = new StringBuilder();
+        for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        return result.toString();
+    }
+
     // ── ZIP extraction ────────────────────────────────────────────────────────
 
     private File extractZip(String zipPath) {
         File zipFile = new File(zipPath);
-        if (!zipFile.exists()) {
-            Log.e(TAG, "ZIP file not found: " + zipPath);
+        if (!zipFile.isFile() || zipFile.length() <= 0) {
+            Log.e(TAG, "ZIP file not found or empty: " + zipPath);
             return null;
         }
-
-        File tempDest = new File(context.getCacheDir(),
-                "as_import_" + System.currentTimeMillis());
-        FileUtil.makeDir(tempDest.getAbsolutePath());
-
-        try (ZipInputStream zis = new ZipInputStream(
-                new java.io.FileInputStream(zipFile))) {
-
-            ZipEntry entry;
-            byte[] buffer = new byte[8192];
-            int skippedEntries = 0;
-
-            while ((entry = zis.getNextEntry()) != null) {
-                String entryName = entry.getName();
-                if (entryName.contains("..")) {
-                    Log.w(TAG, "Skipping suspicious ZIP entry: " + entryName);
-                    logger.warning("Skipped path-traversal ZIP entry: " + entryName);
-                    zis.closeEntry();
-                    skippedEntries++;
-                    continue;
-                }
-                File dest = new File(tempDest, entryName);
-                if (entry.isDirectory()) {
-                    FileUtil.makeDir(dest.getAbsolutePath());
-                } else {
-                    FileUtil.makeDir(dest.getParentFile().getAbsolutePath());
-                    try (FileOutputStream fos = new FileOutputStream(dest)) {
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) fos.write(buffer, 0, len);
+        File tempDest = new File(context.getCacheDir(), "as_import_" + System.nanoTime());
+        if (!tempDest.mkdirs() && !tempDest.isDirectory()) {
+            logger.error("Cannot create temporary extraction directory.", null,
+                    new ImportLogger.ErrorContext().file(tempDest.getAbsolutePath()));
+            return null;
+        }
+        final int maxEntries = 50000;
+        final long maxExpandedBytes = 1024L * 1024L * 1024L;
+        byte[] buffer = new byte[16384];
+        int entryCount = 0;
+        long expandedBytes = 0;
+        java.util.Set<String> seenPaths = new java.util.HashSet<>();
+        String canonicalRoot;
+        try {
+            canonicalRoot = tempDest.getCanonicalPath() + File.separator;
+            try (ZipInputStream zis = new ZipInputStream(new java.io.BufferedInputStream(
+                    new java.io.FileInputStream(zipFile)))) {
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (++entryCount > maxEntries) throw new IOException("ZIP contains too many entries (limit " + maxEntries + ").");
+                    String name = entry.getName();
+                    if (name == null || name.trim().isEmpty() || name.startsWith("/")
+                            || name.startsWith("\\") || name.matches("^[A-Za-z]:.*")) {
+                        throw new IOException("ZIP contains an unsafe absolute entry path.");
                     }
+                    for (String segment : name.replace('\\', '/').split("/")) {
+                        if ("..".equals(segment) || ".".equals(segment)) throw new IOException("ZIP contains a traversal path segment.");
+                    }
+                    File dest = new File(tempDest, name);
+                    String destPath = dest.getCanonicalPath();
+                    if (!destPath.startsWith(canonicalRoot)) {
+                        throw new IOException("ZIP entry attempts to escape the extraction directory.");
+                    }
+                    if (!seenPaths.add(destPath)) throw new IOException("ZIP contains duplicate entry paths.");
+                    if (entry.isDirectory()) {
+                        if (!dest.mkdirs() && !dest.isDirectory()) throw new IOException("Cannot create ZIP directory: " + name);
+                    } else {
+                        File parent = dest.getParentFile();
+                        if (parent != null && !parent.mkdirs() && !parent.isDirectory()) {
+                            throw new IOException("Cannot create ZIP directory for " + name);
+                        }
+                        try (FileOutputStream fos = new FileOutputStream(dest)) {
+                            int len;
+                            while ((len = zis.read(buffer)) != -1) {
+                                expandedBytes += len;
+                                if (expandedBytes > maxExpandedBytes) {
+                                    throw new IOException("ZIP expands beyond the 1 GB import safety limit.");
+                                }
+                                fos.write(buffer, 0, len);
+                            }
+                        }
+                    }
+                    zis.closeEntry();
                 }
-                zis.closeEntry();
             }
-
-            if (skippedEntries > 0) {
-                logger.warning("Skipped " + skippedEntries + " suspicious ZIP entries (path traversal).");
-            }
-            Log.d(TAG, "ZIP extracted to: " + tempDest.getAbsolutePath());
+            if (entryCount == 0) throw new IOException("ZIP archive contains no entries.");
+            Log.d(TAG, "ZIP extracted to: " + tempDest.getAbsolutePath() + " (" + entryCount + " entries)");
             return tempDest;
-
         } catch (IOException e) {
             Log.e(TAG, "ZIP extraction failed", e);
-            logger.error("ZIP extraction failed", e,
-                    new ImportLogger.ErrorContext().file(zipPath));
-            FileUtil.deleteFile(tempDest.getAbsolutePath());
+            logger.error("ZIP extraction failed", e, new ImportLogger.ErrorContext().file(zipPath));
+            deleteRecursively(tempDest);
             return null;
         }
     }
@@ -1007,9 +1808,12 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
      * see the caveat on SketchwareWriter.buildLogicData()'s javadoc for exactly what
      * is and isn't independently re-confirmed here.
      */
-    private String buildFullLogicData(List<ClassifiedSource> sources, File baseLayoutDir) {
+    private String buildFullLogicData(List<ClassifiedSource> sources,
+                                      List<LayoutImporter.ImportedLayout> layouts,
+                                      boolean extractCustomMethodsToMoreBlocks) {
         StringBuilder sb = new StringBuilder();
         JavaLogicConverter converter = new JavaLogicConverter();
+        Set<String> convertedActivityScreens = new LinkedHashSet<>();
 
         for (ClassifiedSource cs : sources) {
             if (cs.kind != ClassifiedSource.Kind.ACTIVITY) continue;
@@ -1019,7 +1823,9 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
                     : SourceClassifier.classNameToSketchwareFileName(cs.simpleClassName);
             String activityJavaName = fileNameToActivityJavaName(fileName);
 
-            java.util.Set<String> knownViewIds = extractViewIds(baseLayoutDir, cs.associatedLayout);
+            ViewInfo viewInfo = extractImportedViewInfo(layouts, fileName);
+            java.util.Set<String> knownViewIds = viewInfo.ids;
+            Map<String, Integer> knownViewTypes = viewInfo.types;
 
             String javaSource;
             try {
@@ -1031,7 +1837,7 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
 
             JavaLogicConverter.ConversionResult result;
             try {
-                result = converter.convert(javaSource, knownViewIds);
+                result = converter.convert(javaSource, knownViewIds, knownViewTypes, extractCustomMethodsToMoreBlocks);
             } catch (Exception e) {
                 logger.warning("Logic conversion failed for " + cs.simpleClassName + ": " + e.getMessage()
                         + " — original source is still preserved as copied, unconverted.");
@@ -1039,6 +1845,7 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
                 continue;
             }
 
+            convertedActivityScreens.add(fileName);
             sb.append("@").append(activityJavaName).append("_components\n");
             sb.append(result.componentsSection);
             sb.append("@").append(activityJavaName).append("_events\n");
@@ -1046,6 +1853,17 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
             if (!result.varLines.isEmpty()) {
                 sb.append("@").append(activityJavaName).append("_var\n");
                 for (String v : result.varLines) sb.append(v).append("\n");
+            }
+            if (extractCustomMethodsToMoreBlocks && result.functionDeclarations != null
+                    && !result.functionDeclarations.trim().isEmpty()) {
+                sb.append("@").append(activityJavaName).append("_func\n");
+                sb.append(result.functionDeclarations);
+            }
+            // The initialization section is part of the confirmed Sketchware Neo
+            // logic schema even when the Android Studio class has no onCreate override.
+            // Write the empty header explicitly rather than leaving the section absent.
+            if (!result.sections.containsKey("onCreate_initializeLogic")) {
+                sb.append("@").append(activityJavaName).append("_onCreate_initializeLogic\n");
             }
             for (Map.Entry<String, String> section : result.sections.entrySet()) {
                 sb.append("@").append(activityJavaName).append("_").append(section.getKey()).append("\n");
@@ -1061,7 +1879,58 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
                 }
             }
         }
+
+        // Always emit required empty lifecycle/component/event sections for registered
+        // Activities without a readable source file, so data/file and data/logic agree.
+        if (layouts != null) for (LayoutImporter.ImportedLayout layout : layouts) {
+            if (layout == null || layout.fileType != ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY
+                    || convertedActivityScreens.contains(layout.sketchwareFileName)) continue;
+            String activityJavaName = fileNameToActivityJavaName(layout.sketchwareFileName);
+            sb.append("@").append(activityJavaName).append("_components\n");
+            sb.append("@").append(activityJavaName).append("_events\n");
+            sb.append("@").append(activityJavaName).append("_onCreate_initializeLogic\n");
+            sb.append("@").append(activityJavaName).append("_onBackPressed_onBackPressed\n");
+            logger.warning("Registered Activity '" + layout.sketchwareFileName
+                    + "' has no convertible Java source; created valid empty logic sections.");
+        }
         return sb.toString();
+    }
+
+    private static final class ViewInfo {
+        final java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        final Map<String, Integer> types = new java.util.LinkedHashMap<>();
+    }
+
+    /** Reads the already-converted Sketchware view data (not raw XML) so event target
+     * IDs and targetType values match widgets that really exist in the imported screen. */
+    private ViewInfo extractImportedViewInfo(List<LayoutImporter.ImportedLayout> layouts, String screenName) {
+        ViewInfo info = new ViewInfo();
+        if (layouts == null || screenName == null) return info;
+        LayoutImporter.ImportedLayout match = null;
+        for (LayoutImporter.ImportedLayout layout : layouts) {
+            if (layout != null && screenName.equals(layout.sketchwareFileName)
+                    && layout.fileType == ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY) {
+                match = layout;
+                break;
+            }
+        }
+        if (match == null || match.viewSection == null) return info;
+        Pattern idPattern = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+        Pattern typePattern = Pattern.compile("\"type\"\\s*:\\s*(-?\\d+)");
+        String[] lines = match.viewSection.split("\n");
+        for (String line : lines) {
+            if (line.startsWith("@" + screenName + ".xml_fab")) break;
+            if (!line.startsWith("{")) continue;
+            Matcher id = idPattern.matcher(line);
+            Matcher type = typePattern.matcher(line);
+            if (id.find() && type.find() && !"_fab".equals(id.group(1))) {
+                try {
+                    info.ids.add(id.group(1));
+                    info.types.put(id.group(1), Integer.parseInt(type.group(1)));
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        return info;
     }
 
     /** ProjectFileBean.getActivityName(fileName) + ".java" — the same derivation SketchwareWriter uses. */
@@ -1069,24 +1938,305 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         return ProjectFileBean.getActivityName(fileName) + ".java";
     }
 
-    private static final java.util.regex.Pattern XML_ID_ATTR = java.util.regex.Pattern.compile(
-            "android:id=\"@\\+?(?:android:)?id/([A-Za-z_][A-Za-z0-9_]*)\"");
+    /**
+     * Maps the Android SDK/build properties to Sketchware settings after the project has
+     * received its permanent sc_id. Maven dependencies are imported only when the user
+     * has enabled that option; unresolved aliases/catalog coordinates are logged, never
+     * converted to invented Maven coordinates.
+     */
+    private void applyImportedBuildSettings(String scId, ParsedGradle parsed,
+                                            SketchwareWriter.WriteInput input, File appModuleDir, File projectRoot) throws Exception {
+        ProjectSettings projectSettings = new ProjectSettings(scId);
+        if (!parsed.explicitFields.contains(ParsedGradle.FIELD_MIN_SDK)) logger.warning("minSdk is not a literal Gradle value; using importer fallback " + parsed.minSdk + ". Review SDK aliases/flavors manually.");
+        if (!parsed.explicitFields.contains(ParsedGradle.FIELD_TARGET_SDK)) logger.warning("targetSdk is not a literal Gradle value; using importer fallback " + parsed.targetSdk + ". Review SDK aliases/flavors manually.");
+        if (!parsed.explicitFields.contains(ParsedGradle.FIELD_COMPILE_SDK)) logger.warning("compileSdk is not a literal Gradle value; using importer fallback " + parsed.compileSdk + ". Review SDK aliases/flavors manually.");
+        projectSettings.setValue(ProjectSettings.SETTING_MINIMUM_SDK_VERSION, String.valueOf(parsed.minSdk));
+        projectSettings.setValue(ProjectSettings.SETTING_TARGET_SDK_VERSION, String.valueOf(parsed.targetSdk));
+        projectSettings.setValue(ProjectSettings.SETTING_COMPILE_SDK_VERSION, String.valueOf(parsed.compileSdk));
+        projectSettings.setValue(ProjectSettings.SETTING_ENABLE_VIEWBINDING,
+                parsed.viewBindingEnabled ? ProjectSettings.SETTING_GENERIC_VALUE_TRUE : ProjectSettings.SETTING_GENERIC_VALUE_FALSE);
 
-    /** Scans a layout XML file for every android:id value present (regex, not a full XML parse —
-     *  sufficient here since we only need the set of ids, not structure). */
-    private java.util.Set<String> extractViewIds(File baseLayoutDir, String associatedLayout) {
-        java.util.Set<String> ids = new java.util.HashSet<>();
-        if (associatedLayout == null || associatedLayout.isEmpty()) return ids;
-        File layoutFile = new File(baseLayoutDir, associatedLayout + ".xml");
-        if (!layoutFile.exists()) return ids;
-        try {
-            String xml = new String(java.nio.file.Files.readAllBytes(layoutFile.toPath()), "UTF-8");
-            java.util.regex.Matcher m = XML_ID_ATTR.matcher(xml);
-            while (m.find()) ids.add(m.group(1));
-        } catch (Exception e) {
-            Log.w(TAG, "Could not scan view ids from " + layoutFile.getName(), e);
+        String javaVersion = input.javaVersion;
+        new BuildSettings(scId).setValue(BuildSettings.SETTING_JAVA_VERSION, javaVersion);
+        projectSettings.setValue(ProjectSettings.SETTING_ENABLE_CUSTOM_JAVA,
+                options.convertJavaToBlocks ? ProjectSettings.SETTING_GENERIC_VALUE_FALSE
+                        : ProjectSettings.SETTING_GENERIC_VALUE_TRUE);
+        projectSettings.setValue("multidex", parsed.multiDexEnabled
+                ? ProjectSettings.SETTING_GENERIC_VALUE_TRUE : ProjectSettings.SETTING_GENERIC_VALUE_FALSE);
+
+        // Set Neo's own shrinker switches independently of the optional Maven dependency
+        // transfer. The writer starts the project with a safe default; now mirror explicit
+        // Android Studio release/minifier settings into Neo's persisted project config.
+        ProguardHandler proguardHandler = new ProguardHandler(scId);
+        proguardHandler.setProguardEnabled(parsed.minifyEnabledInRelease);
+        if (parsed.explicitFields.contains(ParsedGradle.FIELD_R8_ENABLED)) {
+            proguardHandler.setR8Enabled(parsed.r8Enabled);
+        } else if (parsed.minifyEnabledInRelease) {
+            proguardHandler.setR8Enabled(true);
         }
-        return ids;
+
+        File gradleFile = new File(appModuleDir, "build.gradle");
+        if (!gradleFile.isFile()) gradleFile = new File(appModuleDir, "build.gradle.kts");
+        String original = gradleFile.isFile()
+                ? new String(java.nio.file.Files.readAllBytes(gradleFile.toPath()), StandardCharsets.UTF_8) : "";
+        List<GradleDependency> dependencies = new ArrayList<>();
+        if (options.importGradleDependencies) {
+            dependencies.addAll(new GradleParser().parseDependencyList(original));
+            dependencies.addAll(resolveVersionCatalogDependencies(original, projectRoot));
+        } else {
+            logger.info("Maven dependency transfer was disabled. SDK, Java compatibility, multidex, release minification and the compatible Custom Gradle template are still imported.");
+        }
+        jq metadata = new jq();
+        metadata.sc_id = scId;
+        metadata.packageName = input.packageName == null || input.packageName.trim().isEmpty()
+                ? "com.imported.project" : input.packageName.trim();
+        metadata.projectName = input.appName == null || input.appName.trim().isEmpty() ? "ImportedProject" : input.appName;
+        metadata.versionCode = String.valueOf(input.versionCode);
+        metadata.versionName = input.versionName == null ? "1.0" : input.versionName;
+        metadata.g = true;
+        String generated = Lx.getBuildGradleString(parsed.compileSdk, parsed.minSdk,
+                String.valueOf(parsed.targetSdk), metadata, parsed.viewBindingEnabled);
+        // Lx's standard template deliberately defaults release minification to false.
+        // Preserve the source project's explicit release setting in the imported custom
+        // Gradle script as well as Neo's ProguardHandler state; either side alone would
+        // leave the restored project's build settings inconsistent.
+        if (parsed.minifyEnabledInRelease) {
+            generated = generated.replace("minifyEnabled false", "minifyEnabled true");
+        }
+        if (parsed.multiDexEnabled) {
+            generated = injectIntoDefaultConfig(generated, "multiDexEnabled true");
+        }
+        String javaVersionToken = toGradleJavaVersionToken(parsed.javaVersion);
+        String compileOptions = "compileOptions {\r\n"
+                + "    sourceCompatibility JavaVersion." + javaVersionToken + "\r\n"
+                + "    targetCompatibility JavaVersion." + javaVersionToken + "\r\n"
+                + "}\r\n\r\n";
+        if (generated.contains("buildTypes {")) generated = generated.replace("buildTypes {", compileOptions + "buildTypes {");
+        if (parsed.dataBindingEnabled) {
+            logger.warning("Android dataBinding is enabled in the source project. Its generated binding classes and <layout> XML wrappers are not converted into Sketchware blocks; original sources/resources are preserved, but data-binding-specific code may require manual migration.");
+        }
+        if (parsed.hasKotlin) {
+            logger.warning("Kotlin source/plugin declarations are detected and source files are preserved, but this importer does not claim to compile the original Kotlin/Compose plugin pipeline in Sketchware Neo's generated project. Review the retained Gradle files and Kotlin sources.");
+        }
+
+        Set<String> existing = new LinkedHashSet<>();
+        Matcher existingCoordinates = Pattern.compile("['\\\"]([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::[^'\\\"]*)?['\\\"]").matcher(generated);
+        while (existingCoordinates.find()) existing.add(existingCoordinates.group(1) + ":" + existingCoordinates.group(2));
+        List<String> importedLines = new ArrayList<>();
+        Set<String> added = new LinkedHashSet<>();
+        Set<String> platformCoordinates = new LinkedHashSet<>();
+        Matcher platformMatcher = Pattern.compile("(?m)\\b(?:implementation|api|runtimeOnly|compileOnly)\\s*\\(?\\s*platform\\s*\\(?\\s*['\"]([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::[^'\"]*)?['\"]").matcher(original);
+        while (platformMatcher.find()) platformCoordinates.add(platformMatcher.group(1) + ":" + platformMatcher.group(2));
+        for (GradleDependency dependency : dependencies) {
+            if (dependency == null) continue;
+            String cfg = dependency.configuration == null ? "" : dependency.configuration.trim();
+            if (!("implementation".equals(cfg) || "api".equals(cfg) || "runtimeOnly".equals(cfg) || "compileOnly".equals(cfg))) {
+                logger.warning("Skipped Gradle configuration '" + cfg + "' for " + dependency.coordinate() + " (tests/compiler plugins are not app runtime dependencies).");
+                continue;
+            }
+            if (dependency.version == null || dependency.version.trim().isEmpty()) {
+                logger.warning("Skipped dependency without an explicit version: " + dependency.coordinate() + ". Version-catalog/BOM-managed dependencies need manual review.");
+                continue;
+            }
+            if (!dependency.group.matches("[A-Za-z0-9_.-]+") || !dependency.artifact.matches("[A-Za-z0-9_.-]+")
+                    || !dependency.version.matches("[A-Za-z0-9_.+\\-]+")) {
+                logger.warning("Skipped dependency with an unsupported coordinate/version: " + dependency.coordinate());
+                continue;
+            }
+            String key = dependency.group + ":" + dependency.artifact;
+            if (platformCoordinates.contains(key)) {
+                logger.info("Kept BOM/platform dependency out of plain Maven declarations: " + key);
+                continue;
+            }
+            if (existing.contains(key) || !added.add(key)) {
+                logger.info("Dependency already supplied by Sketchware or duplicate; not added twice: " + key);
+                continue;
+            }
+            String config = "api".equals(cfg) ? "implementation" : cfg;
+            importedLines.add("    " + config + " '" + key + ":" + dependency.version + "'");
+        }
+        if (!importedLines.isEmpty()) {
+            int end = generated.lastIndexOf("}");
+            if (end < 0) throw new IOException("Generated Custom Gradle template is malformed: dependencies block was not found.");
+            generated = generated.substring(0, end) + String.join("\r\n", importedLines) + "\r\n" + generated.substring(end);
+        }
+
+        File customGradleDir = new File(new FilePathUtil().getPathCustomGradle(scId));
+        if (!customGradleDir.exists() && !customGradleDir.mkdirs()) {
+            throw new IOException("Could not create Custom Gradle directory: " + customGradleDir.getAbsolutePath());
+        }
+        writeUtf8(new File(customGradleDir, "app_build.gradle"), generated);
+        if (original.contains("plugins {") || original.contains("plugins{")) {
+            java.util.regex.Matcher pluginMatcher = Pattern.compile("(?m)^\\s*id\\s+['\"]([^'\"]+)['\"](?:\\s+version\\s+['\"]([^'\"]+)['\"])?").matcher(original);
+            while (pluginMatcher.find()) {
+                String pluginId = pluginMatcher.group(1);
+                if (!"com.android.application".equals(pluginId)
+                        && !"org.jetbrains.kotlin.android".equals(pluginId)
+                        && !"kotlin-android".equals(pluginId)) {
+                    logger.warning("Custom Gradle plugin '" + pluginId + "' is retained in files/android_studio_original/gradle_project, but was not executed/translated automatically. Verify its plugin version and required root pluginManagement/buildscript configuration before enabling it.");
+                }
+            }
+        }
+        writeUtf8(new File(customGradleDir, "build.gradle"), Lx.c("8.12.0", "4.4.2"));
+        writeUtf8(new File(customGradleDir, "settings.gradle"), Lx.a());
+        writeUtf8(new File(customGradleDir, "gradle.properties"),
+                "android.useAndroidX=true\nandroid.enableJetifier=true\norg.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\n");
+        projectSettings.setValue(ProjectSettings.SETTING_ENABLE_CUSTOM_GRADLE, ProjectSettings.SETTING_GENERIC_VALUE_TRUE);
+        logger.info("Custom Gradle configured. Imported " + importedLines.size() + " direct dependency declaration(s); unsupported/BOM/catalog dependencies are recorded as warnings.");
+    }
+
+
+    private String injectIntoDefaultConfig(String buildScript, String statement) {
+        if (buildScript == null || statement == null || statement.trim().isEmpty()) return buildScript;
+        if (buildScript.contains(statement)) return buildScript;
+        Matcher matcher = Pattern.compile("(?s)(defaultConfig\\s*\\{)(.*?)(\\n\\s*\\})").matcher(buildScript);
+        if (!matcher.find()) {
+            logger.warning("Could not add '" + statement + "' because generated Gradle has no recognizable defaultConfig block.");
+            return buildScript;
+        }
+        String body = matcher.group(2);
+        return buildScript.substring(0, matcher.start()) + matcher.group(1) + body
+                + "\r\n    " + statement + matcher.group(3) + buildScript.substring(matcher.end());
+    }
+
+    private String supportedJavaVersion(String rawVersion) {
+        String version = rawVersion == null ? "1.8"
+                : rawVersion.trim().replace("JavaVersion.", "").replace("VERSION_", "").replace('_', '.');
+        if ("8".equals(version)) version = "1.8";
+        if ("1.8".equals(version) || "11".equals(version) || "17".equals(version)) return version;
+        logger.warning("Source Java target '" + version + "' is not supported by this Sketchware Neo settings profile; using Java 17 while preserving the original Gradle scripts for review.");
+        return "17";
+    }
+
+    private String toGradleJavaVersionToken(String rawVersion) {
+        String version = rawVersion == null ? "17"
+                : rawVersion.trim().replace("JavaVersion.", "").replace("VERSION_", "");
+        if ("1.8".equals(version) || "8".equals(version)) return "VERSION_1_8";
+        if ("11".equals(version)) return "VERSION_11";
+        if ("17".equals(version)) return "VERSION_17";
+        logger.warning("Source Java version '" + version + "' is not represented by this Sketchware Neo build-settings schema; using Java 17 in generated Gradle and Neo settings. Newer language features may need migration.");
+        return "VERSION_17";
+    }
+
+    /** Resolves the subset of Gradle Version Catalog aliases whose Maven coordinates and
+     * explicit versions can be read statically. Unresolved aliases are left as warnings;
+     * this intentionally does not evaluate Gradle scripts or execute arbitrary build logic. */
+    private List<GradleDependency> resolveVersionCatalogDependencies(String buildFile, File projectRoot) {
+        List<GradleDependency> result = new ArrayList<>();
+        if (buildFile == null || projectRoot == null) return result;
+        java.util.regex.Pattern usePattern = Pattern.compile(
+                "(?m)\\b(implementation|api|runtimeOnly|compileOnly)\\s*\\(?\\s*libs\\.([A-Za-z0-9_.-]+)");
+        Matcher uses = usePattern.matcher(buildFile);
+        if (!uses.find()) return result;
+        File catalog = new File(new File(projectRoot, "gradle"), "libs.versions.toml");
+        if (!catalog.isFile()) {
+            logger.warning("Gradle Version Catalog aliases are used but gradle/libs.versions.toml was not found; aliases cannot be resolved safely.");
+            return result;
+        }
+        try {
+            Map<String, String> versions = new java.util.LinkedHashMap<>();
+            Map<String, String> libraries = new java.util.LinkedHashMap<>();
+            String section = "";
+            String currentKey = null;
+            StringBuilder currentValue = new StringBuilder();
+            for (String raw : java.nio.file.Files.readAllLines(catalog.toPath(), StandardCharsets.UTF_8)) {
+                String line = raw.replaceFirst("\\s+#.*$", "").trim();
+                if (line.isEmpty()) continue;
+                if (line.startsWith("[") && line.endsWith("]")) {
+                    if (currentKey != null) {
+                        if ("versions".equals(section)) versions.put(currentKey, currentValue.toString());
+                        if ("libraries".equals(section)) libraries.put(currentKey, currentValue.toString());
+                        currentKey = null; currentValue.setLength(0);
+                    }
+                    section = line.substring(1, line.length() - 1).trim();
+                    continue;
+                }
+                if (!("versions".equals(section) || "libraries".equals(section))) continue;
+                Matcher declaration = Pattern.compile("^([A-Za-z0-9_.-]+)\\s*=\\s*(.*)$").matcher(line);
+                if (declaration.find()) {
+                    if (currentKey != null) {
+                        if ("versions".equals(section)) versions.put(currentKey, currentValue.toString());
+                        if ("libraries".equals(section)) libraries.put(currentKey, currentValue.toString());
+                    }
+                    currentKey = declaration.group(1);
+                    currentValue.setLength(0);
+                    currentValue.append(declaration.group(2));
+                } else if (currentKey != null) currentValue.append(' ').append(line);
+                if (currentKey != null && !line.endsWith(",") && currentValue.toString().trim().endsWith("}")) {
+                    // Finish only when brace depth is balanced; supports basic multiline inline tables.
+                    int depth = 0; boolean quoted = false; char prev = 0;
+                    for (char c : currentValue.toString().toCharArray()) {
+                        if (c == '"' && prev != '\\') quoted = !quoted;
+                        if (!quoted) { if (c == '{') depth++; else if (c == '}') depth--; }
+                        prev = c;
+                    }
+                    if (depth <= 0) {
+                        if ("versions".equals(section)) versions.put(currentKey, currentValue.toString());
+                        if ("libraries".equals(section)) libraries.put(currentKey, currentValue.toString());
+                        currentKey = null; currentValue.setLength(0);
+                    }
+                }
+            }
+            if (currentKey != null) {
+                if ("versions".equals(section)) versions.put(currentKey, currentValue.toString());
+                if ("libraries".equals(section)) libraries.put(currentKey, currentValue.toString());
+            }
+            Map<String, String[]> resolved = new java.util.LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : libraries.entrySet()) {
+                String key = entry.getKey(); String value = entry.getValue();
+                String group = tomlString(value, "group");
+                String artifact = tomlString(value, "name");
+                String module = tomlString(value, "module");
+                if (module != null && module.contains(":")) { group = module.substring(0, module.indexOf(':')); artifact = module.substring(module.indexOf(':') + 1); }
+                if (group == null || artifact == null || !group.matches("[A-Za-z0-9_.-]+") || !artifact.matches("[A-Za-z0-9_.-]+")) continue;
+                String version = tomlString(value, "version");
+                Matcher ref = Pattern.compile("version\\.ref\\s*=\\s*\"([^\"]+)\"").matcher(value);
+                boolean hasRef = ref.find();
+                if (!hasRef) {
+                    ref = Pattern.compile("version\\s*=\\s*\\{\\s*ref\\s*=\\s*\"([^\"]+)\"").matcher(value);
+                    hasRef = ref.find();
+                }
+                if (hasRef) version = tomlVersion(versions.get(ref.group(1)));
+                else if (version == null) {
+                    Matcher nested = Pattern.compile("version\\s*=\\s*\\{[^}]*\\b(?:strictly|require|prefer)\\s*=\\s*\"([^\"]+)\"").matcher(value);
+                    if (nested.find()) version = nested.group(1);
+                }
+                String accessor = key.replace('-', '.').replace('_', '.').replaceAll("\\.+", ".").toLowerCase(java.util.Locale.ROOT);
+                resolved.put(accessor, new String[]{group, artifact, version == null ? "" : version});
+            }
+            uses.reset();
+            while (uses.find()) {
+                String config = uses.group(1); String alias = uses.group(2).replaceAll("\\.+", ".").toLowerCase(java.util.Locale.ROOT);
+                String[] coord = resolved.get(alias);
+                if (coord == null) {
+                    logger.warning("Unresolved Gradle Version Catalog alias libs." + alias + "; original source is preserved but dependency must be reviewed manually.");
+                    continue;
+                }
+                String version = coord[2].isEmpty() ? null : coord[2];
+                result.add(new GradleDependency(config, coord[0], coord[1], version));
+            }
+        } catch (Exception e) {
+            logger.warning("Could not safely parse Gradle Version Catalog: " + e.getMessage());
+        }
+        return result;
+    }
+
+    private static String tomlString(String value, String key) {
+        if (value == null) return null;
+        Matcher matcher = Pattern.compile("(?:^|[,\\s{])" + Pattern.quote(key) + "\\s*=\\s*\"([^\"]+)\"").matcher(value);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static String tomlVersion(String value) {
+        if (value == null) return null;
+        Matcher m = Pattern.compile("^\\s*\"([^\"]+)\"").matcher(value.trim());
+        return m.find() ? m.group(1) : null;
+    }
+
+    private static void writeUtf8(File file, String content) throws IOException {
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("Could not create directory: " + parent);
+        java.nio.file.Files.write(file.toPath(), content.getBytes(StandardCharsets.UTF_8));
     }
 
     private String resolveLauncherFileName(List<ClassifiedSource> sources, ParsedManifest manifest) {
@@ -1130,53 +2280,268 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
         return sb.append("]").toString();
     }
 
+    private String buildManifestAttributesJson(ParsedManifest manifest, List<ClassifiedSource> sources) {
+        JSONArray array = new JSONArray();
+        if (manifest == null) return array.toString();
+        try {
+            if (manifest.permissionEntries != null && !manifest.permissionEntries.isEmpty()) {
+                for (ParsedManifest.PermissionEntry permission : manifest.permissionEntries) {
+                    if (permission == null || permission.name == null || permission.name.trim().isEmpty()) continue;
+                    JSONObject item = new JSONObject();
+                    item.put("name", "_application_permissions");
+                    String attributes = joinManifestAttributes(permission.attributes);
+                    if (attributes.isEmpty()) attributes = "android:name=\"" + xmlAttributeValue(permission.name) + "\"";
+                    item.put("value", attributes);
+                    array.put(item);
+                }
+            } else {
+                for (String permission : manifest.permissions) {
+                    JSONObject item = new JSONObject();
+                    item.put("name", "_application_permissions");
+                    item.put("value", "android:name=\"" + xmlAttributeValue(permission) + "\"");
+                    array.put(item);
+                }
+            }
+            String appAttrs = joinManifestAttributes(manifest.applicationAttributes);
+            if (!appAttrs.isEmpty()) {
+                JSONObject item = new JSONObject();
+                item.put("name", "_application_attrs");
+                item.put("value", appAttrs);
+                array.put(item);
+            }
+            for (ParsedManifest.ActivityEntry activity : manifest.activities) {
+                String className = generatedActivityClassName(activity, sources);
+                if (className == null || className.isEmpty()) continue;
+                String attrs = joinManifestAttributes(activity.androidAttributes);
+                if (!attrs.isEmpty()) {
+                    JSONObject item = new JSONObject();
+                    item.put("name", className);
+                    item.put("value", attrs);
+                    array.put(item);
+                }
+            }
+        } catch (JSONException e) {
+            logger.warning("Could not serialize AndroidManifest attribute injections; some attributes will need manual review: " + e.getMessage());
+        }
+        return array.toString();
+    }
+
+    private String buildActivityComponentsJson(ParsedManifest manifest, List<ClassifiedSource> sources) {
+        JSONArray array = new JSONArray();
+        if (manifest == null) return array.toString();
+        try {
+            for (ParsedManifest.ActivityEntry activity : manifest.activities) {
+                String className = generatedActivityClassName(activity, sources);
+                if (className == null || className.isEmpty()) continue;
+                String childXml = stripDefaultLauncherIntentFilter(activity.childComponentsXml);
+                if (childXml.trim().isEmpty()) continue;
+                JSONObject item = new JSONObject();
+                item.put("name", className);
+                item.put("value", childXml.trim());
+                array.put(item);
+            }
+        } catch (JSONException e) {
+            logger.warning("Could not serialize Activity manifest child elements: " + e.getMessage());
+        }
+        return array.toString();
+    }
+
+    private String generatedActivityClassName(ParsedManifest.ActivityEntry activity, List<ClassifiedSource> sources) {
+        if (activity == null) return null;
+        for (ClassifiedSource source : sources) {
+            if (source != null && source.kind == ClassifiedSource.Kind.ACTIVITY
+                    && activity.simpleClassName.equals(source.simpleClassName)) {
+                String fileName = source.sketchwareFileName;
+                if (fileName == null || fileName.trim().isEmpty()) {
+                    fileName = SourceClassifier.classNameToSketchwareFileName(source.simpleClassName);
+                }
+                return ProjectFileBean.getActivityName(fileName);
+            }
+        }
+        // A manifest Activity with no source has a blank registered shell; use Neo's
+        // generated class naming rule rather than the Android Studio class filename.
+        return ProjectFileBean.getActivityName(SourceClassifier.classNameToSketchwareFileName(activity.simpleClassName));
+    }
+
+    private String buildApplicationComponentsXml(ParsedManifest manifest) {
+        if (manifest == null) return "";
+        StringBuilder sb = new StringBuilder();
+        appendApplicationComponents(sb, manifest.services, manifest.packageName);
+        appendApplicationComponents(sb, manifest.receivers, manifest.packageName);
+        appendApplicationComponents(sb, manifest.providers, manifest.packageName);
+        return sb.toString().trim();
+    }
+
+    private void appendApplicationComponents(StringBuilder out, List<ParsedManifest.ComponentEntry> entries,
+                                             String originalPackage) {
+        if (entries == null) return;
+        for (ParsedManifest.ComponentEntry entry : entries) {
+            if (entry == null || entry.rawXml == null || entry.rawXml.trim().isEmpty()) continue;
+            String xml = entry.rawXml;
+            String rawClass = entry.rawClassName == null ? "" : entry.rawClassName.trim();
+            if (!rawClass.isEmpty()) {
+                String fqcn = rawClass.startsWith(".") ? originalPackage + rawClass
+                        : (rawClass.indexOf('.') < 0 ? originalPackage + "." + rawClass : rawClass);
+                xml = xml.replaceFirst("android:name=\"[^\"]*\"",
+                        java.util.regex.Matcher.quoteReplacement("android:name=\"" + xmlAttributeValue(fqcn) + "\""));
+            }
+            out.append(xml).append('\n');
+        }
+    }
+
+    private String joinManifestAttributes(Map<String, String> attrs) {
+        if (attrs == null || attrs.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : attrs.entrySet()) {
+            String name = entry.getKey();
+            String value = entry.getValue();
+            if (name == null || name.trim().isEmpty() || value == null) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(name).append("=\"").append(xmlAttributeValue(value)).append("\"");
+        }
+        return sb.toString();
+    }
+
+    private String xmlAttributeValue(String value) {
+        return value == null ? "" : value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;");
+    }
+
+    private String stripDefaultLauncherIntentFilter(String rawXml) {
+        if (rawXml == null || rawXml.trim().isEmpty()) return "";
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                "(?is)<intent-filter\\b[^>]*>.*?</intent-filter>");
+        java.util.regex.Matcher matcher = pattern.matcher(rawXml);
+        StringBuffer out = new StringBuffer();
+        while (matcher.find()) {
+            String block = matcher.group();
+            boolean launcher = block.contains("android.intent.action.MAIN")
+                    && block.contains("android.intent.category.LAUNCHER");
+            matcher.appendReplacement(out, launcher ? "" : java.util.regex.Matcher.quoteReplacement(block));
+        }
+        matcher.appendTail(out);
+        return out.toString();
+    }
+
+    private String readImportedProguardRules(ParsedGradle gradle, File appModuleDir) {
+        StringBuilder combined = new StringBuilder();
+        java.util.LinkedHashSet<String> paths = new java.util.LinkedHashSet<>();
+        // ParsedGradle versions from older importer revisions could capture the argument
+        // to getDefaultProguardFile() (typically a .txt file), not the project's own rules.
+        // Re-scan the actual module script for literal *.pro paths following proguardFiles
+        // and consumerProguardFiles, which is the meaningful user-owned rules input.
+        if (appModuleDir != null) {
+            File gradleFile = new File(appModuleDir, "build.gradle");
+            if (!gradleFile.isFile()) gradleFile = new File(appModuleDir, "build.gradle.kts");
+            if (gradleFile.isFile()) {
+                try {
+                    String buildText = new String(java.nio.file.Files.readAllBytes(gradleFile.toPath()), StandardCharsets.UTF_8);
+                    Matcher declaration = Pattern.compile("(?is)\\b(?:consumerProguardFiles?|proguardFiles?)\\b([^;\\n]*(?:\\n(?!\\s*\\}).*){0,8})").matcher(buildText);
+                    while (declaration.find()) {
+                        Matcher fileName = Pattern.compile("['\"]([^'\"]+\\.pro)['\"]", Pattern.CASE_INSENSITIVE).matcher(declaration.group(1));
+                        while (fileName.find()) {
+                            String relative = fileName.group(1).trim();
+                            if (relative.isEmpty() || relative.contains("${") || relative.contains("$")) {
+                                logger.warning("Could not resolve dynamic ProGuard rules path '" + relative + "'; original Gradle script is preserved for manual review.");
+                                continue;
+                            }
+                            if (new File(relative).isAbsolute()) paths.add(relative);
+                            else paths.add(new File(appModuleDir, relative).getAbsolutePath());
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warning("Could not inspect Gradle ProGuard file declarations: " + e.getMessage());
+                }
+            }
+            paths.add(new File(appModuleDir, "proguard-rules.pro").getAbsolutePath());
+            paths.add(new File(appModuleDir, "consumer-rules.pro").getAbsolutePath());
+        }
+        if (gradle != null && gradle.proguardRulesPath != null
+                && gradle.proguardRulesPath.toLowerCase(Locale.ROOT).endsWith(".pro")) {
+            paths.add(gradle.proguardRulesPath);
+        }
+        if (gradle != null && gradle.consumerRulesPath != null) paths.add(gradle.consumerRulesPath);
+
+        for (String path : paths) {
+            if (path == null) continue;
+            File file = new File(path);
+            if (!file.isFile()) continue;
+            try {
+                String content = new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+                if (!content.trim().isEmpty()) {
+                    if (combined.length() > 0) combined.append("\n\n");
+                    combined.append("# Imported from ").append(file.getName()).append('\n').append(content.trim());
+                    logger.info("Preserved ProGuard/consumer rules from " + file.getAbsolutePath());
+                }
+            } catch (Exception e) {
+                logger.warning("Could not read ProGuard rules " + file.getName() + ": " + e.getMessage());
+            }
+        }
+        return combined.toString();
+    }
+
     private String buildCustomManifest(ParsedManifest manifest) {
-        Log.i(TAG, "NOTE: Permissions, services, and receivers from AndroidManifest.xml " +
-                "must be added manually via Sketchware's Manifest editor.");
-        logger.warning("Permissions, services, and receivers must be added manually " +
-                "in Sketchware's Manifest editor. They were not automatically imported.");
+        // Neo's ManifestInjector has explicit, source-confirmed channels for app/activity
+        // attributes, permissions and application components. The original manifest is
+        // also preserved under files/android_studio_original/ for elements without a
+        // confirmed injection channel (for example top-level <queries> declarations).
         return "";
     }
 
-    // ── Cleanup ───────────────────────────────────────────────────────────────
+    // ── Cleanup and reporting helpers ────────────────────────────────────────
+
+    /** Best-effort recursive deletion used for temporary folders and failed installs. */
+    private static boolean deleteRecursively(File target) {
+        if (target == null || !target.exists()) return true;
+        boolean success = true;
+        if (target.isDirectory()) {
+            File[] children = target.listFiles();
+            if (children == null) {
+                success = false;
+            } else {
+                for (File child : children) {
+                    if (!deleteRecursively(child)) success = false;
+                }
+            }
+        }
+        if (target.exists() && !target.delete()) success = false;
+        return success;
+    }
 
     private void cleanupTemp() {
-        if (tempDir != null && tempDir.exists()) {
-            FileUtil.deleteFile(tempDir.getAbsolutePath());
-            logger.info("Temp directory deleted: " + tempDir.getAbsolutePath());
+        File directory = tempDir;
+        tempDir = null;
+        if (directory == null || !directory.exists()) return;
+        if (deleteRecursively(directory)) {
+            logger.info("Temp directory deleted: " + directory.getAbsolutePath());
             Log.d(TAG, "Temp directory cleaned up.");
+        } else {
+            logger.warning("Could not completely delete temporary import directory: "
+                    + directory.getAbsolutePath());
         }
     }
 
-    // ── Stat helpers ──────────────────────────────────────────────────────────
-
-    /** Recursively counts regular files in a directory tree. */
-    private int countFiles(File dir) {
-        if (dir == null || !dir.exists()) return 0;
+    /** Counts regular files recursively; unreadable/missing directories count as zero. */
+    private int countFiles(File directory) {
+        if (directory == null || !directory.exists()) return 0;
+        if (!directory.isDirectory()) return 1;
+        File[] children = directory.listFiles();
+        if (children == null) return 0;
         int count = 0;
-        File[] files = dir.listFiles();
-        if (files == null) return 0;
-        for (File f : files) {
-            if (f.isDirectory()) count += countFiles(f);
-            else count++;
-        }
+        for (File child : children) count += countFiles(child);
         return count;
     }
 
-    /**
-     * Counts files in all subdirectories whose name starts with any of the given prefixes.
-     * Used to count drawables (drawable*, mipmap*) and fonts (font*).
-     */
+    /** Counts resources in directories whose names begin with one of the given prefixes. */
     private int countFilesInPrefixedDirs(File resDir, String... prefixes) {
-        if (resDir == null || !resDir.exists()) return 0;
-        int count = 0;
+        if (resDir == null || !resDir.isDirectory() || prefixes == null || prefixes.length == 0) return 0;
         File[] children = resDir.listFiles();
         if (children == null) return 0;
+        int count = 0;
         for (File child : children) {
             if (!child.isDirectory()) continue;
-            String name = child.getName().toLowerCase(java.util.Locale.getDefault());
+            String name = child.getName().toLowerCase(Locale.ROOT);
             for (String prefix : prefixes) {
-                if (name.startsWith(prefix)) {
+                if (prefix != null && name.startsWith(prefix.toLowerCase(Locale.ROOT))) {
                     count += countFiles(child);
                     break;
                 }
@@ -1186,16 +2551,17 @@ public class ASProjectImporter extends AsyncTask<Void, String, ASProjectImporter
     }
 
     private static String formatFileSize(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format(java.util.Locale.getDefault(), "%.1f KB", bytes / 1024.0);
-        return String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024));
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) {
+            return String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        }
+        return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private void progress(String msg) {
-        Log.d(TAG, msg);
-        publishProgress(msg);
+    private void progress(String message) {
+        String safeMessage = message == null ? "Working…" : message;
+        Log.d(TAG, safeMessage);
+        publishProgress(safeMessage);
     }
 
     private Result failure(String reason) {

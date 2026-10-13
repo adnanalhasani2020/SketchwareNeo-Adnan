@@ -90,6 +90,9 @@ public class LayoutImporter {
         /** Root element's raw XML attributes (e.g. "android:background" -> "@color/bg_root"),
          *  in document order. Empty map if the root tag could not be read. */
         public final Map<String, String> rootAttributes;
+        /** Activity/Fragment class owning a registered layout, null for orphan layouts. */
+        public String sourceClassName;
+        public String sourceLayoutName;
 
         public ImportedLayout(
                 String sketchwareFileName, int fileType,
@@ -149,6 +152,48 @@ public class LayoutImporter {
         File[] xmlFiles = layoutDir.listFiles();
         if (xmlFiles == null) return results;
 
+        // Only convert layouts that actually belong to a classified screen or are
+        // included by one of those layouts. Android projects commonly contain dozens
+        // of unrelated layouts (RecyclerView rows, dialogs, loading placeholders, etc.);
+        // they are not Activities and must not become phantom Sketchware Custom Views.
+        // Build the active include closure in deterministic order.
+        Map<String, File> layoutFilesByName = new LinkedHashMap<>();
+        for (File xml : xmlFiles) {
+            if (xml.isFile() && xml.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) {
+                String raw = xml.getName().substring(0, xml.getName().length() - 4);
+                layoutFilesByName.put(raw, xml);
+            }
+        }
+        java.util.Set<String> activeLayoutNames = new java.util.LinkedHashSet<>(layoutToSource.keySet());
+        java.util.regex.Pattern includePattern = java.util.regex.Pattern.compile(
+                "<include\\b[^>]*\\blayout\\s*=\\s*[\"']@layout/([A-Za-z0-9_]+)[\"']",
+                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+        boolean changed;
+        do {
+            changed = false;
+            for (String owner : new java.util.ArrayList<>(activeLayoutNames)) {
+                File file = layoutFilesByName.get(owner);
+                if (file == null) continue;
+                try {
+                    String xml = new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                    java.util.regex.Matcher matcher = includePattern.matcher(xml);
+                    while (matcher.find()) {
+                        String included = matcher.group(1);
+                        if (layoutFilesByName.containsKey(included) && activeLayoutNames.add(included)) changed = true;
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not inspect layout includes in " + file.getName(), e);
+                }
+            }
+        } while (changed);
+
+        java.util.Arrays.sort(xmlFiles, (a, b) -> {
+            boolean aRelevant = a.getName().endsWith(".xml") && activeLayoutNames.contains(a.getName().substring(0, a.getName().length() - 4));
+            boolean bRelevant = b.getName().endsWith(".xml") && activeLayoutNames.contains(b.getName().substring(0, b.getName().length() - 4));
+            if (aRelevant != bRelevant) return aRelevant ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+
         // Tracks every sketchwareFileName claimed so far this run, so an unrelated,
         // unregistered layout (e.g. a genuinely different "customer.xml" used only via
         // manual inflate/include, unconnected to any Activity/Fragment) can never silently
@@ -164,16 +209,209 @@ public class LayoutImporter {
         Map<String, File> claimedFileNames = new HashMap<>();
 
         for (File xml : xmlFiles) {
-            if (!xml.getName().endsWith(".xml")) continue;
+            if (!xml.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) continue;
 
-            String rawName = xml.getName().replace(".xml", "");
+            String rawName = xml.getName().substring(0, xml.getName().length() - 4);
+            if (!activeLayoutNames.contains(rawName)) {
+                Log.i(TAG, "Skipped unrelated Android Studio layout (not an Activity screen and not included): " + xml.getName());
+                continue;
+            }
             ImportedLayout imported = processLayout(
                     xml, rawName, layoutToSource, nameToActivity, appTheme, claimedFileNames);
 
             if (imported != null) results.add(imported);
         }
 
+        // An Activity may legitimately have no XML layout (or use a layout expression
+        // the lightweight source classifier cannot resolve). Register a blank shell
+        // for every remaining Activity so file/view/logic registries stay consistent.
+        ensureMissingActivityScreens(results, sources, manifest);
         return results;
+    }
+
+    private void ensureMissingActivityScreens(List<ImportedLayout> layouts,
+                                              List<ClassifiedSource> sources,
+                                              ParsedManifest manifest) {
+        Map<String, ParsedManifest.ActivityEntry> activityEntries = new HashMap<>();
+        if (manifest != null && manifest.activities != null) {
+            for (ParsedManifest.ActivityEntry entry : manifest.activities) activityEntries.put(entry.simpleClassName, entry);
+        }
+        java.util.Set<String> activityNames = new java.util.LinkedHashSet<>();
+        java.util.Set<String> allNames = new java.util.LinkedHashSet<>();
+        for (ImportedLayout layout : layouts) {
+            allNames.add(layout.sketchwareFileName);
+            if (layout.fileType == ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY) activityNames.add(layout.sketchwareFileName);
+        }
+
+        if (sources != null) for (ClassifiedSource source : sources) {
+            if (source == null || source.kind != ClassifiedSource.Kind.ACTIVITY) continue;
+            String requested = source.sketchwareFileName;
+            if (requested == null || requested.trim().isEmpty()) requested = SourceClassifier.classNameToSketchwareFileName(source.simpleClassName);
+            requested = safeFileName(requested);
+            if (requested.isEmpty()) requested = "screen";
+
+            // Keep a screen already produced for this exact Activity, but never let a
+            // different Activity with a colliding derived screen name disappear silently.
+            String owner = null;
+            for (ImportedLayout existing : layouts) {
+                if (requested.equals(existing.sketchwareFileName)
+                        && existing.fileType == ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY) {
+                    owner = existing.sourceClassName;
+                    break;
+                }
+            }
+            if (activityNames.contains(requested)) {
+                for (int i = 0; i < layouts.size(); i++) {
+                    ImportedLayout existing = layouts.get(i);
+                    if (existing.sketchwareFileName.equals(requested)
+                            && existing.fileType != ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY) {
+                        String renamed = uniqueName(requested + "_customview", allNames);
+                        layouts.set(i, renameLayout(existing, renamed));
+                        allNames.add(renamed);
+                        Log.w(TAG, "Renamed orphan Custom View '" + requested + "' to '" + renamed
+                                + "' because a registered Activity already uses that fileName.");
+                    }
+                }
+                if (source.simpleClassName.equals(owner)) {
+                    source.sketchwareFileName = requested;
+                    continue;
+                }
+                String renamed = uniqueName(requested + "_activity", allNames);
+                source.sketchwareFileName = renamed;
+                requested = renamed;
+                Log.w(TAG, "Activity screen collision: " + source.simpleClassName + " will use '" + renamed + "'.");
+            }
+            if (allNames.contains(requested)) {
+                for (int i = 0; i < layouts.size(); i++) {
+                    ImportedLayout existing = layouts.get(i);
+                    if (existing.sketchwareFileName.equals(requested)
+                            && existing.fileType != ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY) {
+                        String renamed = uniqueName(requested + "_customview", allNames);
+                        layouts.set(i, renameLayout(existing, renamed));
+                        if (!activityNames.contains(requested)) allNames.remove(requested);
+                        allNames.add(renamed);
+                    }
+                }
+            }
+            if (allNames.contains(requested)) {
+                String renamed = uniqueName(requested + "_activity", allNames);
+                source.sketchwareFileName = renamed;
+                requested = renamed;
+            }
+            ParsedManifest.ActivityEntry entry = activityEntries.get(source.simpleClassName);
+            int keyboard = entry == null ? 0 : entry.sketchwareKeyboard();
+            int orientation = entry == null ? 0 : entry.sketchwareOrientation();
+            layouts.add(blankActivity(requested, keyboard, orientation));
+            activityNames.add(requested);
+            allNames.add(requested);
+            source.sketchwareFileName = requested;
+            Log.i(TAG, "Added blank screen shell for Activity " + source.simpleClassName + " → " + requested);
+        }
+
+        // Sketchware's project workflow expects a registered main Activity. Do not let
+        // buildFileData invent one without the matching @main.xml view section.
+        if (!activityNames.contains("main")) {
+            if (allNames.contains("main")) {
+                for (int i = 0; i < layouts.size(); i++) {
+                    ImportedLayout existing = layouts.get(i);
+                    if ("main".equals(existing.sketchwareFileName)
+                            && existing.fileType != ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY) {
+                        String renamed = uniqueName("main_customview", allNames);
+                        layouts.set(i, renameLayout(existing, renamed));
+                        allNames.remove("main");
+                        allNames.add(renamed);
+                    }
+                }
+            }
+            layouts.add(blankActivity("main", 0, 0));
+            activityNames.add("main");
+            allNames.add("main");
+        }
+    }
+
+    private ImportedLayout blankActivity(String name, int keyboard, int orientation) {
+        StringBuilder view = new StringBuilder();
+        view.append("@").append(name).append(".xml\n");
+        view.append("@").append(name).append(".xml_fab\n");
+        view.append(buildDefaultFabPlaceholderJson()).append("\n");
+        return new ImportedLayout(name, ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY,
+                view.toString().replace("\\n", "\n"), 0, keyboard, orientation,
+                "LinearLayout", new LinkedHashMap<>());
+    }
+
+    private ImportedLayout renameLayout(ImportedLayout old, String name) {
+        String oldPrefix = "@" + old.sketchwareFileName + ".xml";
+        String newPrefix = "@" + name + ".xml";
+        String viewSection = old.viewSection.replace(oldPrefix, newPrefix);
+        ImportedLayout renamed = new ImportedLayout(name, old.fileType, viewSection, old.options,
+                old.keyboardSetting, old.orientation, old.rootClassName,
+                new LinkedHashMap<>(old.rootAttributes));
+        renamed.sourceClassName = old.sourceClassName;
+        renamed.sourceLayoutName = old.sourceLayoutName;
+        return renamed;
+    }
+
+    private String uniqueName(String base, java.util.Set<String> existing) {
+        String candidate = safeFileName(base);
+        int suffix = 2;
+        while (existing.contains(candidate)) candidate = safeFileName(base) + "_" + suffix++;
+        return candidate;
+    }
+
+    /**
+     * Creates valid blank activity shells when the user explicitly disables XML
+     * layout conversion. Activity metadata and launcher routing remain available,
+     * while no XML widget is guessed or imported.
+     */
+    public List<ImportedLayout> createEmptyScreens(List<ClassifiedSource> sources,
+                                                   ParsedManifest manifest) {
+        List<ImportedLayout> result = new ArrayList<>();
+        Map<String, ParsedManifest.ActivityEntry> entries = new HashMap<>();
+        if (manifest != null && manifest.activities != null) {
+            for (ParsedManifest.ActivityEntry entry : manifest.activities) entries.put(entry.simpleClassName, entry);
+        }
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        if (sources != null) {
+            for (ClassifiedSource source : sources) {
+                if (source == null || source.kind != ClassifiedSource.Kind.ACTIVITY) continue;
+                String name = source.sketchwareFileName;
+                if (name == null || name.trim().isEmpty()) name = SourceClassifier.classNameToSketchwareFileName(source.simpleClassName);
+                name = safeFileName(name);
+                if (name.isEmpty()) name = "screen";
+                if (names.contains(name)) {
+                    String original = name;
+                    int suffix = 2;
+                    while (names.contains(name)) name = safeFileName(original + "_" + suffix++);
+                    source.sketchwareFileName = name;
+                    Log.w(TAG, "Renamed duplicate registered Activity screen to '" + name + "' while XML conversion is disabled.");
+                }
+                names.add(name);
+                source.sketchwareFileName = name;
+                ParsedManifest.ActivityEntry entry = entries.get(source.simpleClassName);
+                int keyboard = entry == null ? 0 : entry.sketchwareKeyboard();
+                int orientation = entry == null ? 0 : entry.sketchwareOrientation();
+                StringBuilder view = new StringBuilder();
+                view.append("@").append(name).append(".xml\n");
+                view.append("@").append(name).append(".xml_fab\n");
+                view.append(buildDefaultFabPlaceholderJson()).append("\n");
+                result.add(new ImportedLayout(name, ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY,
+                        view.toString(), 0, keyboard, orientation, "LinearLayout", new LinkedHashMap<>()));
+            }
+        }
+        if (!names.contains("main")) {
+            StringBuilder view = new StringBuilder("@main.xml\n@main.xml_fab\n");
+            view.append(buildDefaultFabPlaceholderJson()).append("\n");
+            result.add(new ImportedLayout("main", ProjectFileBean.PROJECT_FILE_TYPE_ACTIVITY,
+                    view.toString(), 0, 0, 0, "LinearLayout", new LinkedHashMap<>()));
+        }
+        return result;
+    }
+
+    private String safeFileName(String value) {
+        String clean = value.trim().replaceAll("[^A-Za-z0-9_]", "_");
+        if (clean.isEmpty()) return "";
+        if (!Character.isLetter(clean.charAt(0)) && clean.charAt(0) != '_') clean = "screen_" + clean;
+        return clean.toLowerCase(java.util.Locale.ROOT);
     }
 
     // ── Single layout processing ──────────────────────────────────────────────
@@ -213,21 +451,20 @@ public class LayoutImporter {
         }
 
         // ── Collision guard ─────────────────────────────────────────────────────
-        // A REGISTERED screen's fileName is authoritative (it's what the Activity's
-        // own Java class, data/file entry, and data/logic sections are all keyed on
-        // elsewhere) and is never renamed here. An UNREGISTERED (orphan) layout whose
-        // computed fileName collides with one already claimed — by a registered screen
-        // OR by an earlier orphan — is disambiguated with a numeric suffix instead of
-        // silently sharing that fileName (which would corrupt both files' data/view
-        // section and data/file registration — see comment on the caller).
+        // Registered names normally remain authoritative. If two registered source
+        // classes nevertheless resolve to the same Sketchware screen name, rename the
+        // later one and mutate the ClassifiedSource too, so data/file, data/view and
+        // data/logic all use the same unique name. Orphan layouts are suffixed as well.
         if (claimedFileNames.containsKey(sketchwareFileName)) {
             if (isRegistered) {
-                Log.w(TAG, "sketchwareFileName '" + sketchwareFileName + "' for registered screen "
-                        + source.simpleClassName + " collides with an already-processed layout ("
-                        + claimedFileNames.get(sketchwareFileName).getName() + "). Both are registered "
-                        + "screens with the same derived name — this needs SourceClassifier's fileName "
-                        + "derivation fixed; NOT auto-renamed here since this fileName is also used by "
-                        + "the Activity's own Java/logic sections elsewhere.");
+                String originalName = sketchwareFileName;
+                int suffix = 2;
+                while (claimedFileNames.containsKey(sketchwareFileName)) {
+                    sketchwareFileName = originalName + "_" + suffix++;
+                }
+                source.sketchwareFileName = sketchwareFileName;
+                Log.w(TAG, "Registered screen name collision for " + source.simpleClassName
+                        + " (" + originalName + "); renamed consistently to '" + sketchwareFileName + "'.");
             } else {
                 String originalName = sketchwareFileName;
                 int suffix = 2;
@@ -293,12 +530,17 @@ public class LayoutImporter {
         viewSection.append("@").append(sketchwareFileName).append(".xml_fab\n");
         viewSection.append(buildDefaultFabPlaceholderJson()).append("\n");
 
-        return new ImportedLayout(
+        ImportedLayout importedLayout = new ImportedLayout(
                 sketchwareFileName, fileType,
                 viewSection.toString(), options,
                 keyboardSetting, orientation,
                 rootInfo != null ? rootInfo.className   : null,
                 rootInfo != null ? rootInfo.attributes  : new LinkedHashMap<>());
+        if (isRegistered && source != null) {
+            importedLayout.sourceClassName = source.simpleClassName;
+            importedLayout.sourceLayoutName = rawLayoutName;
+        }
+        return importedLayout;
     }
 
     // ── Root tag extraction ───────────────────────────────────────────────────
@@ -320,7 +562,18 @@ public class LayoutImporter {
     private RootInfo extractRootInfo(File xml) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            // Android layouts are untrusted input during import. Harden the parser
+            // without making otherwise-readable layouts fail on parser implementations
+            // that do not support every optional security feature.
+            try { factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true); } catch (Exception ignored) { }
+            try { factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); } catch (Exception ignored) { }
+            try { factory.setFeature("http://xml.org/sax/features/external-general-entities", false); } catch (Exception ignored) { }
+            try { factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false); } catch (Exception ignored) { }
+            try { factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false); } catch (Exception ignored) { }
+            try { factory.setXIncludeAware(false); } catch (Exception ignored) { }
+            try { factory.setExpandEntityReferences(false); } catch (Exception ignored) { }
             DocumentBuilder builder = factory.newDocumentBuilder();
+            builder.setEntityResolver((publicId, systemId) -> new org.xml.sax.InputSource(new java.io.StringReader("")));
             Document doc = builder.parse(xml);
             Element root = doc.getDocumentElement();
             if (root == null) return null;
@@ -393,8 +646,12 @@ public class LayoutImporter {
     private Map<String, ClassifiedSource> buildLayoutMap(List<ClassifiedSource> sources) {
         Map<String, ClassifiedSource> map = new HashMap<>();
         for (ClassifiedSource cs : sources) {
-            if (cs.associatedLayout != null && !cs.associatedLayout.isEmpty()) {
-                // Only register the first match for a given layout name
+            // Only Activities, Fragments, and genuine custom-view classes may own a
+            // Sketchware layout section. Utility classes, adapters, services and model
+            // classes often reference R.layout.row/dialog_* for inflation; those references
+            // must not cause those layouts to become accidental Custom View screens.
+            if (cs.isSketchwareScreen() && cs.associatedLayout != null && !cs.associatedLayout.isEmpty()) {
+                // Only register the first match for a given layout name.
                 if (!map.containsKey(cs.associatedLayout)) {
                     map.put(cs.associatedLayout, cs);
                 } else {

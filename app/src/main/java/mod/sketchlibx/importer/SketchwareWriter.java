@@ -80,7 +80,13 @@ public class SketchwareWriter {
         public String versionName  = "1.0";
         public int    minSdk       = 21;
         public int    targetSdk    = 34;
+        public int    compileSdk   = 34;
         public boolean hasKotlin   = false;
+        public boolean viewBindingEnabled = false;
+        public boolean customJavaEnabled = false;
+        public boolean multiDexEnabled = false;
+        /** Selected Neo-supported source/target Java version (1.8, 11, or 17). */
+        public String javaVersion = "17";
 
         // Icon
         public boolean hasCustomIcon   = false;
@@ -107,6 +113,12 @@ public class SketchwareWriter {
         /** data/permission JSON array of manifest <uses-permission> strings, e.g.
          *  ["android.permission.INTERNET"]. "[]" if none. */
         public String permissionsJson = "[]";
+        /** Actual Neo AndroidManifestInjector attributes, not just the permission checklist. */
+        public String manifestAttributesJson = "[]";
+        public String activityComponentsJson = "[]";
+        public String appComponentsXml = "";
+        public String proguardRules = "";
+        public boolean proguardEnabled = false;
 
         /** Sketchware fileName (not class name) of the launcher screen, e.g. "main".
          *  Written verbatim to data/Injection/androidmanifest/activity_launcher.txt. */
@@ -190,29 +202,26 @@ public class SketchwareWriter {
         FileUtil.writeFile(dataPath + "/project_config", buildProjectConfig(input));
         Log.d(TAG, "Wrote: project_config");
 
-        // data/build_config — confirmed content is a fixed, project-independent
-        // default in real projects (D8/Java 1.8/logcat on) — written verbatim.
+        // data/build_config — retain Neo's standard D8/logcat defaults while writing
+        // the supported Java target resolved from the imported Gradle configuration.
+        String safeJavaVersion = ("1.8".equals(input.javaVersion) || "11".equals(input.javaVersion)
+                || "17".equals(input.javaVersion)) ? input.javaVersion : "17";
         FileUtil.writeFile(dataPath + "/build_config",
                 "{\"dexer\":\"D8\",\"classpath\":\"\",\"enable_logcat\":\"true\","
                         + "\"no_http_legacy\":\"false\",\"android_jar\":\"\","
-                        + "\"no_warn\":\"true\",\"java_ver\":\"1.8\"}");
+                        + "\"no_warn\":\"true\",\"java_ver\":\"" + safeJavaVersion + "\"}");
         Log.d(TAG, "Wrote: build_config");
 
         // data/permission — JSON array of manifest <uses-permission> strings.
         FileUtil.writeFile(dataPath + "/permission", input.permissionsJson);
         Log.d(TAG, "Wrote: permission");
 
-        // data/local_library — confirmed real format is an array of fully pre-processed
-        // descriptors (dexPath/jarPath/manifestPath/assetsPath/pgRulesPath under
-        // .sketchware/libs/local_libs/<name>/) pointing at a dexed+manifest-extracted
-        // copy of each .aar/.jar. This importer only copies the RAW .aar/.jar into
-        // files/libs/ (see ASProjectImporter step 14) — it does not dex them or extract
-        // their manifest, so it cannot honestly populate real entries here yet. Writing
-        // "[]" is the safe choice: any local libraries copied to files/libs/ will be
-        // present on disk after import but are NOT yet wired into the actual build —
-        // flagging this clearly rather than fabricating descriptor paths that don't exist.
+        // data/local_library begins empty and is populated by ASProjectImporter after
+        // the project ID exists. Each AAR/JAR is extracted/installed under
+        // .sketchware/libs/local_libs/<name>/ and registered using Neo's own
+        // LocalLibrariesUtil.createLibraryMap(), not a guessed descriptor schema.
         FileUtil.writeFile(dataPath + "/local_library", "[]");
-        Log.d(TAG, "Wrote: local_library (raw .aar/.jar copies are NOT yet auto-registered — see comment)");
+        Log.d(TAG, "Wrote: local_library (local AAR/JAR registration follows in importer)");
 
         // data/proguard — confirmed real default for a project with no obfuscation set up.
         FileUtil.writeFile(dataPath + "/proguard", "{\"debug\":\"false\",\"enabled\":\"false\"}");
@@ -258,27 +267,41 @@ public class SketchwareWriter {
                 input.launcherFileName);
         Log.d(TAG, "Wrote: Injection/androidmanifest/activity_launcher.txt = " + input.launcherFileName);
 
-        // data/Injection/androidmanifest/app_components.txt — confirmed to exist but
-        // EMPTY in a real project with no <service>/<receiver>/<provider> entries. This
-        // importer currently has no confirmed real-sample schema for the POPULATED case
-        // (services/receivers/providers are copied as plain Java only — see
-        // ASProjectImporter's reconcileComponents() warnings) — writing a guessed schema
-        // here risks a manifest merge that's subtly wrong in a way that's hard to notice.
-        // Left empty and documented rather than guessed; manual registration in
-        // Sketchware's Manifest Manager is still required for these, exactly as already
-        // warned to the user during import.
-        FileUtil.writeFile(dataPath + "/Injection/androidmanifest/app_components.txt", "");
-        Log.d(TAG, "Wrote: Injection/androidmanifest/app_components.txt (empty — see comment)");
+        // data/Injection/androidmanifest/app_components.txt is the confirmed raw-XML
+        // insertion channel under <application>. The parser only supplies serialized
+        // service/receiver/provider elements with their nested filters and attributes.
+        // The source manifest is separately retained for any construct Neo cannot inject.
+        FileUtil.writeFile(dataPath + "/Injection/androidmanifest/app_components.txt",
+                input.appComponentsXml == null ? "" : input.appComponentsXml);
+        Log.d(TAG, "Wrote: Injection/androidmanifest/app_components.txt");
 
-        // data/Injection/androidmanifest/attributes.json — confirmed real format is an
-        // array of extra <application> tag attributes (theme/backup rules/etc.), but the
-        // real sample's values reference Sketchware's OWN auto-generated resource names
-        // (its own @style/Theme.<AppName>, @xml/backup_rules) which only exist once
-        // Sketchware itself creates/opens the project — this importer cannot predict
-        // those names, so "[]" is the safe, non-corrupting default; Sketchware applies
-        // its own standard defaults here regardless.
-        FileUtil.writeFile(dataPath + "/Injection/androidmanifest/attributes.json", "[]");
+        FileUtil.writeFile(dataPath + "/Injection/androidmanifest/activities_components.json",
+                input.activityComponentsJson == null ? "[]" : input.activityComponentsJson);
+        Log.d(TAG, "Wrote: Injection/androidmanifest/activities_components.json");
+
+        // data/Injection/androidmanifest/attributes.json is the confirmed injector format
+        // for supported application/activity attributes and uses-permission entries.
+        // Values are copied from the source manifest except generated class/layout/label
+        // and icon identifiers, which Neo must supply itself.
+        FileUtil.writeFile(dataPath + "/Injection/androidmanifest/attributes.json",
+                input.manifestAttributesJson == null ? "[]" : input.manifestAttributesJson);
         Log.d(TAG, "Wrote: Injection/androidmanifest/attributes.json");
+
+        // Source ProGuard rules are retained in Neo's actual rules file. Enable the
+        // feature only when the Android Studio release build explicitly enabled shrinking.
+        if (input.proguardRules != null && !input.proguardRules.trim().isEmpty()) {
+            FileUtil.writeFile(dataPath + "/proguard-rules.pro", input.proguardRules);
+        }
+        try {
+            mod.hey.studios.project.proguard.ProguardHandler proguardHandler =
+                    new mod.hey.studios.project.proguard.ProguardHandler(generatedScId);
+            proguardHandler.setProguardEnabled(input.proguardEnabled);
+            // Neo uses R8 for the optimized shrinker path; enabling only the ProGuard
+            // toggle can leave the generated release configuration inconsistent.
+            proguardHandler.setR8Enabled(input.proguardEnabled);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not apply imported ProGuard enabled state", e);
+        }
 
         // data/custom_manifest.xml — optional; only written if actually populated.
         // Currently always empty (buildCustomManifest() is an intentional stub).
@@ -498,10 +521,10 @@ public class SketchwareWriter {
     private String buildProjectConfig(WriteInput input) {
         return "{"
              + "\"min_sdk\":\"" + input.minSdk + "\","
-             + "\"enable_viewbinding\":\"true\","
+             + "\"enable_viewbinding\":\"" + (input.viewBindingEnabled ? "true" : "false") + "\","
              + "\"force_androidx\":\"true\","
-             + "\"compile_sdk_version\":\"" + input.targetSdk + "\","
-             + "\"multidex\":\"false\","
+             + "\"compile_sdk_version\":\"" + input.compileSdk + "\","
+             + "\"multidex\":\"" + (input.multiDexEnabled ? "true" : "false") + "\","
              + "\"target_sdk\":\"" + input.targetSdk + "\","
              + "\"disable_old_methods\":\"true\","
              + "\"xml_command\":\"true\","
@@ -513,7 +536,7 @@ public class SketchwareWriter {
              // (confirmed from the same real sample, which has several) — this flag
              // tracks something else internal to Sketchware, not "has custom Java",
              // so it's left at the confirmed real default rather than guessed.
-             + "\"custom_java\":\"false\""
+             + "\"custom_java\":\"" + (input.customJavaEnabled ? "true" : "false") + "\""
              + "}";
     }
 

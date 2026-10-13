@@ -41,7 +41,7 @@ import a.a.a.lC;
 import dev.chrisbanes.insetter.Insetter;
 import mod.hey.studios.project.ProjectTracker;
 import mod.hey.studios.project.backup.BackupRestoreManager;
-import mod.sketchlibx.importer.ASProjectImporter;
+import pro.sketchware.activities.importer.AndroidStudioImportActivity;
 import pro.sketchware.R;
 import pro.sketchware.activities.main.activities.MainActivity;
 import pro.sketchware.databinding.MyprojectsBinding;
@@ -128,6 +128,12 @@ public class ProjectsFragment extends DA {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        if (binding != null) refreshProjectsList();
+    }
+
+    @Override
     public void onDestroyView() {
         super.onDestroyView();
         binding = null; 
@@ -158,7 +164,7 @@ public class ProjectsFragment extends DA {
         }
         View btnImport = binding.getRoot().findViewById(R.id.btn_home_import);
         if (btnImport != null) {
-            btnImport.setOnClickListener(v -> ASProjectImporter.showPicker(getActivity(), this));
+            btnImport.setOnClickListener(v -> startActivityForResult(new Intent(requireContext(), AndroidStudioImportActivity.class), 2407));
         }
         View btnRestore = binding.getRoot().findViewById(R.id.btn_home_restore);
         if (btnRestore != null) {

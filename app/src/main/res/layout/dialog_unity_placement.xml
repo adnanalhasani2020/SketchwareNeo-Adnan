@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="24dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Quick Presets"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        android:textColor="?attr/colorPrimary"
+        android:textStyle="bold" />
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:scrollbars="none">
+
+        <com.google.android.material.chip.ChipGroup
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleLine="true">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chip_banner"
+                style="@style/Widget.Material3.Chip.Suggestion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Banner" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chip_interstitial"
+                style="@style/Widget.Material3.Chip.Suggestion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Interstitial" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chip_rewarded"
+                style="@style/Widget.Material3.Chip.Suggestion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Rewarded" />
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/layout_name"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:hint="Placement name"
+        app:boxCornerRadiusBottomEnd="12dp"
+        app:boxCornerRadiusBottomStart="12dp"
+        app:boxCornerRadiusTopEnd="12dp"
+        app:boxCornerRadiusTopStart="12dp">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/et_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:singleLine="true" />
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/layout_id"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:hint="Placement ID"
+        app:boxCornerRadiusBottomEnd="12dp"
+        app:boxCornerRadiusBottomStart="12dp"
+        app:boxCornerRadiusTopEnd="12dp"
+        app:boxCornerRadiusTopStart="12dp">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/et_id"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:singleLine="true" />
+    </com.google.android.material.textfield.TextInputLayout>
+</LinearLayout>

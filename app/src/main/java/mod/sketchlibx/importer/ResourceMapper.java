@@ -1,6 +1,10 @@
 package mod.sketchlibx.importer;
 
 import android.util.Log;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+
+import java.io.FileOutputStream;
 
 import com.google.gson.GsonBuilder;
 import com.google.gson.Gson;
@@ -120,14 +124,21 @@ public class ResourceMapper {
                     if (lower.endsWith(".png") || lower.endsWith(".jpg")
                             || lower.endsWith(".jpeg") || lower.endsWith(".webp")) {
 
-                        DensityCandidate existing = bestImages.get(fName);
+                        boolean webp = lower.endsWith(".webp");
+                        String outputName = webp ? stripExtension(fName) + ".png" : fName;
+                        boolean convertToPng = webp && canDecodeBitmap(resFile);
+                        if (webp && !convertToPng) {
+                            outputName = fName; // Don't lie about the format if decode failed.
+                            Log.w(TAG, "WebP could not be decoded to PNG; preserving original extension: " + resFile.getAbsolutePath());
+                        }
+                        DensityCandidate existing = bestImages.get(outputName);
                         if (existing == null || priority > existing.priority) {
                             if (existing != null) {
-                                Log.w(TAG, "Density collision: " + fName
+                                Log.w(TAG, "Density/format collision: " + outputName
                                         + " — replacing density=" + existing.qualifier
                                         + " with density=" + qualifier);
                             }
-                            bestImages.put(fName, new DensityCandidate(resFile, qualifier, priority));
+                            bestImages.put(outputName, new DensityCandidate(resFile, qualifier, priority, convertToPng));
                         }
 
                     } else if (lower.endsWith(".xml")) {
@@ -177,7 +188,8 @@ public class ResourceMapper {
 
         for (Map.Entry<String, DensityCandidate> entry : bestImages.entrySet()) {
             String fName    = entry.getKey();
-            File   srcFile  = entry.getValue().file;
+            DensityCandidate candidate = entry.getValue();
+            File   srcFile  = candidate.file;
             String cleanName = stripExtension(fName);
 
             // Is this the launcher icon?
@@ -186,20 +198,21 @@ public class ResourceMapper {
                     || cleanName.equals(iconResName + "_round")) {
                 // Use exact match for the main icon only (not foreground / round variants)
                 if (cleanName.equals(iconResName)) {
-                    FileUtil.copyFile(srcFile.getAbsolutePath(), appIconTarget);
-                    result.hasCustomIcon = true;
-                    Log.d(TAG, "Launcher icon: " + fName + " → app-icon/icon.png");
+                    if (copyImageAsPng(srcFile, new File(appIconTarget))) {
+                        result.hasCustomIcon = true;
+                        Log.d(TAG, "Launcher icon converted/copied as valid PNG: " + fName + " → app-icon/icon.png");
+                    } else {
+                        loggerWarning("Could not decode launcher image '" + srcFile.getName() + "' as an image; default Sketchware launcher icon will be used.");
+                    }
                 } else {
                     // Round / foreground variants: copy to images as regular resource
-                    String destPath = swImagesPath + File.separator + fName;
-                    FileUtil.copyFile(srcFile.getAbsolutePath(), destPath);
-                    imageEntries.add(new ResourceEntry(fName));
+                    String actualName = copyMappedImage(candidate, fName, swImagesPath);
+                    imageEntries.add(new ResourceEntry(actualName));
                 }
             } else {
-                String destPath = swImagesPath + File.separator + fName;
-                FileUtil.copyFile(srcFile.getAbsolutePath(), destPath);
-                imageEntries.add(new ResourceEntry(fName));
-                Log.d(TAG, "Image: " + fName);
+                String actualName = copyMappedImage(candidate, fName, swImagesPath);
+                imageEntries.add(new ResourceEntry(actualName));
+                Log.d(TAG, "Image: " + actualName);
             }
         }
 
@@ -251,6 +264,62 @@ public class ResourceMapper {
                 targetDir.getAbsolutePath() + File.separator + resFile.getName());
     }
 
+    /**
+     * Copy an image and return the exact filename used in data/resource. WebP is
+     * renamed to .png only after a successful real decode+PNG encode; if encoding
+     * fails, preserve the original bytes under the original extension instead.
+     */
+    private String copyMappedImage(DensityCandidate candidate, String desiredName, String swImagesPath) {
+        File source = candidate.file;
+        FileUtil.makeDir(swImagesPath);
+        if (candidate.convertToPng) {
+            File png = new File(swImagesPath, desiredName);
+            if (copyImageAsPng(source, png)) return desiredName;
+            if (png.exists()) png.delete();
+            String fallbackName = source.getName();
+            File fallback = new File(swImagesPath, fallbackName);
+            FileUtil.copyFile(source.getAbsolutePath(), fallback.getAbsolutePath());
+            loggerWarning("PNG conversion failed during copy for " + source.getName()
+                    + "; kept the original WebP file as " + fallbackName + ".");
+            return fallbackName;
+        }
+        File destination = new File(swImagesPath, desiredName);
+        FileUtil.copyFile(source.getAbsolutePath(), destination.getAbsolutePath());
+        return desiredName;
+    }
+
+    private boolean canDecodeBitmap(File file) {
+        Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+        if (bitmap == null) return false;
+        bitmap.recycle();
+        return true;
+    }
+
+    /** Writes a decoded image as a real PNG; never just renames JPEG/WebP bytes. */
+    private boolean copyImageAsPng(File source, File destination) {
+        Bitmap bitmap = null;
+        try {
+            bitmap = BitmapFactory.decodeFile(source.getAbsolutePath());
+            if (bitmap == null) return false;
+            File parent = destination.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) return false;
+            try (FileOutputStream out = new FileOutputStream(destination)) {
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) return false;
+                out.flush();
+            }
+            return destination.isFile() && destination.length() > 0;
+        } catch (Exception e) {
+            Log.w(TAG, "Image PNG conversion failed for " + source.getName(), e);
+            return false;
+        } finally {
+            if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+        }
+    }
+
+    private void loggerWarning(String message) {
+        Log.w(TAG, message);
+    }
+
     // ── Density qualifier extraction ─────────────────────────────────────────
 
     /**
@@ -280,13 +349,15 @@ public class ResourceMapper {
     // ── Inner data classes ────────────────────────────────────────────────────
 
     private static class DensityCandidate {
-        final File   file;
+        final File file;
         final String qualifier;
-        final int    priority;
-        DensityCandidate(File file, String qualifier, int priority) {
-            this.file      = file;
+        final int priority;
+        final boolean convertToPng;
+        DensityCandidate(File file, String qualifier, int priority, boolean convertToPng) {
+            this.file = file;
             this.qualifier = qualifier;
-            this.priority  = priority;
+            this.priority = priority;
+            this.convertToPng = convertToPng;
         }
     }
 

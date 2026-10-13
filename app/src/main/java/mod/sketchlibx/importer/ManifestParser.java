@@ -64,34 +64,84 @@ public class ManifestParser {
     private void parseInternal(XmlPullParser p, ParsedManifest out)
             throws XmlPullParserException, IOException {
 
-        // Tracks whether the current <activity> block has a MAIN+LAUNCHER filter
-        boolean inActivity         = false;
-        boolean inIntentFilter     = false;
-        boolean hasMainAction      = false;
+        boolean inActivity = false;
+        boolean inIntentFilter = false;
+        boolean hasMainAction = false;
         boolean hasLauncherCategory = false;
         ParsedManifest.ActivityEntry currentActivity = null;
+        int activityChildDepth = 0;
 
         ParsedManifest.ComponentEntry currentComponent = null;
         java.util.List<ParsedManifest.ComponentEntry> pendingComponentList = null;
+        int componentDepth = 0;
 
         int eventType = p.getEventType();
         while (eventType != XmlPullParser.END_DOCUMENT) {
+            // Service/receiver/provider elements are copied as real manifest XML so their
+            // exported flags, permissions, metadata and intent-filters survive import.
+            if (currentComponent != null) {
+                if (eventType == XmlPullParser.START_TAG) {
+                    componentDepth++;
+                    currentComponent.rawXml += serializeStartTag(p);
+                } else if (eventType == XmlPullParser.END_TAG) {
+                    currentComponent.rawXml += "</" + p.getName() + ">";
+                    componentDepth--;
+                    if (componentDepth <= 0) {
+                        if (pendingComponentList != null) pendingComponentList.add(currentComponent);
+                        currentComponent = null;
+                        pendingComponentList = null;
+                        componentDepth = 0;
+                    }
+                } else if (eventType == XmlPullParser.TEXT && componentDepth > 0) {
+                    String text = p.getText();
+                    if (text != null && !text.trim().isEmpty()) currentComponent.rawXml += xmlEscapeText(text);
+                }
+                eventType = p.next();
+                continue;
+            }
 
             if (eventType == XmlPullParser.START_TAG) {
                 String tag = p.getName();
+
+                // Keep all child XML under an Activity (intent-filter, meta-data, property, etc.)
+                // while still passing the same events through the launcher detector below.
+                if (currentActivity != null && inActivity && !"activity".equals(tag)) {
+                    if (activityChildDepth == 0 && currentActivity.childComponentsXml.length() > 0) {
+                        currentActivity.childComponentsXml += "\n";
+                    }
+                    currentActivity.childComponentsXml += serializeStartTag(p);
+                    activityChildDepth++;
+                } else if (currentActivity != null && inActivity && activityChildDepth > 0) {
+                    currentActivity.childComponentsXml += serializeStartTag(p);
+                    activityChildDepth++;
+                }
 
                 if ("manifest".equals(tag)) {
                     out.packageName = attr(p, null, "package", out.packageName);
 
                 } else if ("uses-permission".equals(tag)) {
                     String permName = attr(p, NS, "name", "");
-                    if (!permName.isEmpty()) out.permissions.add(permName);
+                    if (!permName.isEmpty()) {
+                        if (!out.permissions.contains(permName)) out.permissions.add(permName);
+                        ParsedManifest.PermissionEntry permission = new ParsedManifest.PermissionEntry();
+                        permission.name = permName;
+                        copyAllAndroidAttributes(p, permission.attributes);
+                        out.permissionEntries.add(permission);
+                    }
+                } else if (tag.startsWith("uses-permission-")) {
+                    // Neo's confirmed injector always emits a normal <uses-permission> tag;
+                    // silently converting uses-permission-sdk-* would change SDK semantics.
+                    out.unsupportedManifestItems.add("<" + tag + "> is preserved in the original manifest reference but is not injected because Neo's importer channel emits only <uses-permission>.");
+                } else if ("uses-feature".equals(tag) || "uses-configuration".equals(tag)
+                        || "supports-screens".equals(tag) || "queries".equals(tag)) {
+                    out.unsupportedManifestItems.add("<" + tag + "> is preserved in files/android_studio_original/AndroidManifest.xml but is not copied into the generated manifest by the current Neo injection API.");
 
                 } else if ("application".equals(tag)) {
                     String rawLabel = attr(p, NS, "label", "");
-                    if (!rawLabel.isEmpty()) out.appName = rawLabel; // may be @string/xxx
-                    out.appTheme    = attr(p, NS, "theme", "");
+                    if (!rawLabel.isEmpty()) out.appName = rawLabel;
+                    out.appTheme = attr(p, NS, "theme", "");
                     out.iconResName = stripResPrefix(attr(p, NS, "icon", "@mipmap/ic_launcher"));
+                    copyAndroidAttributes(p, out.applicationAttributes, true);
 
                     String appClassRaw = attr(p, NS, "name", "");
                     if (!appClassRaw.isEmpty()) {
@@ -100,29 +150,45 @@ public class ManifestParser {
 
                 } else if ("service".equals(tag)) {
                     currentComponent = newComponentEntry(p, out.packageName);
+                    currentComponent.rawXml = serializeStartTag(p);
+                    componentDepth = 1;
                     pendingComponentList = out.services;
 
                 } else if ("receiver".equals(tag)) {
                     currentComponent = newComponentEntry(p, out.packageName);
+                    currentComponent.rawXml = serializeStartTag(p);
+                    componentDepth = 1;
                     pendingComponentList = out.receivers;
 
                 } else if ("provider".equals(tag)) {
                     currentComponent = newComponentEntry(p, out.packageName);
                     currentComponent.authorities = attr(p, NS, "authorities", "");
+                    currentComponent.rawXml = serializeStartTag(p);
+                    componentDepth = 1;
                     pendingComponentList = out.providers;
 
                 } else if ("activity".equals(tag)) {
-                    inActivity      = true;
-                    hasMainAction      = false;
+                    inActivity = true;
+                    hasMainAction = false;
                     hasLauncherCategory = false;
+                    activityChildDepth = 0;
 
-                    String rawName   = attr(p, NS, "name", "");
+                    String rawName = attr(p, NS, "name", "");
                     String simpleName = resolveClassName(rawName, out.packageName);
-
-                    currentActivity  = new ParsedManifest.ActivityEntry(rawName, simpleName);
-                    currentActivity.orientation  = attr(p, NS, "screenOrientation", "");
+                    currentActivity = new ParsedManifest.ActivityEntry(rawName, simpleName);
+                    currentActivity.orientation = attr(p, NS, "screenOrientation", "");
                     currentActivity.softInputMode = attr(p, NS, "windowSoftInputMode", "");
-                    currentActivity.theme        = attr(p, NS, "theme", "");
+                    currentActivity.theme = attr(p, NS, "theme", "");
+                    copyAndroidAttributes(p, currentActivity.androidAttributes, false);
+
+                } else if (!inActivity && ("meta-data".equals(tag) || "uses-library".equals(tag)
+                        || "activity-alias".equals(tag) || "property".equals(tag)
+                        || "profileable".equals(tag) || "uses-native-library".equals(tag))) {
+                    // Do not silently imply these application-level manifest declarations
+                    // were imported. The original manifest is preserved for manual recovery.
+                    out.unsupportedManifestItems.add("Application-level <" + tag
+                            + "> is preserved in files/android_studio_original/AndroidManifest.xml"
+                            + " but is not injected into the generated manifest by the current Neo importer.");
 
                 } else if (inActivity && "intent-filter".equals(tag)) {
                     inIntentFilter = true;
@@ -136,8 +202,18 @@ public class ManifestParser {
                     if ("android.intent.category.LAUNCHER".equals(name)) hasLauncherCategory = true;
                 }
 
+            } else if (eventType == XmlPullParser.TEXT && currentActivity != null && activityChildDepth > 0) {
+                String text = p.getText();
+                if (text != null && !text.trim().isEmpty()) currentActivity.childComponentsXml += xmlEscapeText(text);
+
             } else if (eventType == XmlPullParser.END_TAG) {
                 String tag = p.getName();
+
+                if (currentActivity != null && inActivity && activityChildDepth > 0 && !"activity".equals(tag)) {
+                    currentActivity.childComponentsXml += "</" + tag + ">";
+                    activityChildDepth--;
+                    if (activityChildDepth == 0) currentActivity.childComponentsXml += "\n";
+                }
 
                 if ("intent-filter".equals(tag)) {
                     inIntentFilter = false;
@@ -147,19 +223,65 @@ public class ManifestParser {
                         currentActivity.isLauncher = hasMainAction && hasLauncherCategory;
                         out.activities.add(currentActivity);
                     }
-                    inActivity      = false;
+                    inActivity = false;
                     currentActivity = null;
-
-                } else if (("service".equals(tag) || "receiver".equals(tag) || "provider".equals(tag))
-                        && currentComponent != null && pendingComponentList != null) {
-                    pendingComponentList.add(currentComponent);
-                    currentComponent = null;
-                    pendingComponentList = null;
+                    activityChildDepth = 0;
                 }
             }
-
             eventType = p.next();
         }
+    }
+
+    private void copyAllAndroidAttributes(XmlPullParser p, java.util.Map<String, String> target) {
+        for (int i = 0; i < p.getAttributeCount(); i++) {
+            String name = p.getAttributeName(i);
+            String ns = p.getAttributeNamespace(i);
+            if (ns != null && ns.contains("schemas.android.com/tools")) continue;
+            if (NS.equals(ns)) name = "android:" + name;
+            else if (ns != null && !ns.isEmpty()) continue;
+            String value = p.getAttributeValue(i);
+            if (value != null) target.put(name, value);
+        }
+    }
+
+    private void copyAndroidAttributes(XmlPullParser p, java.util.Map<String, String> target,
+                                       boolean application) {
+        for (int i = 0; i < p.getAttributeCount(); i++) {
+            String name = p.getAttributeName(i);
+            String ns = p.getAttributeNamespace(i);
+            // Do not copy build-tool-only attributes; their prefixes may not exist in Neo's manifest.
+            if (ns != null && ns.contains("schemas.android.com/tools")) continue;
+            if (NS.equals(ns)) name = "android:" + name;
+            else if (ns != null && !ns.isEmpty()) continue;
+            if ("android:name".equals(name)) continue; // screen/application class is generated by Neo.
+            if (application && ("android:label".equals(name) || "android:icon".equals(name))) continue;
+            String value = p.getAttributeValue(i);
+            if (value != null) target.put(name, value);
+        }
+    }
+
+    private String serializeStartTag(XmlPullParser p) {
+        StringBuilder out = new StringBuilder("<").append(p.getName());
+        for (int i = 0; i < p.getAttributeCount(); i++) {
+            String ns = p.getAttributeNamespace(i);
+            if (ns != null && ns.contains("schemas.android.com/tools")) continue;
+            String name = p.getAttributeName(i);
+            if (NS.equals(ns)) name = "android:" + name;
+            else if (ns != null && !ns.isEmpty()) continue;
+            out.append(' ').append(name).append("=\"")
+                    .append(xmlEscapeAttribute(p.getAttributeValue(i))).append('"');
+        }
+        return out.append('>').toString();
+    }
+
+    private String xmlEscapeAttribute(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;");
+    }
+
+    private String xmlEscapeText(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     // ── Helper: build a service/receiver/provider entry ───────────────────────

@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Collections;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,6 +41,8 @@ public final class BlocksConverter {
     // exprBlocks are appended after stmtBlocks so the first block in the
     // final list is always the sequence root (required by LogicEditorActivity.a).
     private final List<BlockBean> exprBlocks = new ArrayList<>();
+    /** MoreBlock input name -> Sketchware type token (s/b/d). Empty for ordinary events. */
+    private Map<String, String> argumentTypes = Collections.emptyMap();
 
     // ── Custom block matching ──────────────────────────────────────────────────
     // Loaded once per convert() call via lazy init from ExtraBlockFile.
@@ -243,10 +247,22 @@ public final class BlocksConverter {
     // ══════════════════════════════════════════════════════════════════════════
 
     public static ConversionResult convert(String javaCode) {
+        return convert(javaCode, Collections.emptyMap());
+    }
+
+    /**
+     * Converts a Java method body, optionally identifying parameters belonging to a
+     * Sketchware MoreBlock. Such identifiers become real getArg value blocks rather
+     * than accidental getVar references.
+     *
+     * @param argumentTypes parameter name -> type token: s (text), b (boolean), d (number)
+     */
+    public static ConversionResult convert(String javaCode, Map<String, String> argumentTypes) {
         if (javaCode == null || javaCode.isBlank())
             return new ConversionResult(new ArrayList<>(), "Input is empty.", 0, 0);
         try {
             BlocksConverter c = new BlocksConverter();
+            if (argumentTypes != null && !argumentTypes.isEmpty()) c.argumentTypes = new HashMap<>(argumentTypes);
             List<String> lines = c.preprocess(javaCode);
             if (lines.isEmpty())
                 return new ConversionResult(new ArrayList<>(),
@@ -1874,9 +1890,12 @@ public final class BlocksConverter {
 
         // ── Simple identifier → getVar ─────────────────────────────────────────
         if (expr.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-            String bType = hint == ExprType.STRING  ? "s"
-                         : hint == ExprType.BOOLEAN ? "b" : "d";
-            BlockBean b = new BlockBean(String.valueOf(newId()), expr, bType, "getVar");
+            String argumentType = argumentTypes.get(expr);
+            String bType = argumentType != null ? argumentType
+                    : hint == ExprType.STRING ? "s"
+                    : hint == ExprType.BOOLEAN ? "b" : "d";
+            BlockBean b = new BlockBean(String.valueOf(newId()), expr, bType,
+                    argumentType != null ? "getArg" : "getVar");
             exprBlocks.add(b);
             return "@" + b.id;
         }
