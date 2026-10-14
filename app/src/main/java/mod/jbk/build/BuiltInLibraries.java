@@ -22,8 +22,10 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import a.a.a.Jp;
 import a.a.a.KB;
@@ -134,7 +136,16 @@ public class BuiltInLibraries {
     public static String OKIO_JVM = "okio-jvm-3.15.0";
     public static String OTPVIEW = "OTPView-0.1.0";
     public static String PATTERN_LOCK_VIEW = "pattern-lock-view";
-    public static String UNITY_ADS = "unity-ads-4.20.1";
+    public static String UNITY_ADS = "unity-ads-4.21.0";
+    public static String ANDROIDX_DATASTORE_CORE = "datastore-core-1.0.0";
+    public static String ANDROIDX_WEBKIT = "webkit-1.6.1";
+    public static String ANDROIDX_WORK_RUNTIME_KTX = "work-runtime-ktx-2.7.0";
+    public static String COHERENCELIB = "coherencelib-0.2.0";
+    public static String LISTENABLEFUTURE = "listenablefuture-1.0";
+    public static String OMSDK_ANDROID = "omsdk-android-1.4.9";
+    public static String PLAY_SERVICES_CRONET = "play-services-cronet-18.0.1";
+    public static String PROTOBUF_JAVALITE = "protobuf-javalite-3.25.6";
+    public static String PROTOBUF_KOTLIN_LITE = "protobuf-kotlin-lite-3.25.6";
     public static String PLAY_SERVICES_ADS = "play-services-ads-22.2.0";
     public static String PLAY_SERVICES_ADS_BASE = "play-services-ads-base-22.2.0";
     public static String PLAY_SERVICES_ADS_IDENTIFIER = "play-services-ads-identifier-18.0.0";
@@ -189,7 +200,9 @@ public class BuiltInLibraries {
 
             new BuiltInLibrary(ANDROIDX_COLLECTION_JVM, List.of(ANDROIDX_ANNOTATION_JVM, JETBRAINS_KOTLIN_STDLIB)),
 
-            new BuiltInLibrary(ANDROIDX_CONCURRENT_FUTURES, List.of(ANDROIDX_ANNOTATION_JVM)),
+            new BuiltInLibrary(ANDROIDX_CONCURRENT_FUTURES, List.of(ANDROIDX_ANNOTATION_JVM, LISTENABLEFUTURE)),
+
+            new BuiltInLibrary(LISTENABLEFUTURE),
 
             new BuiltInLibrary(ANDROIDX_CONSTRAINTLAYOUT, List.of(ANDROIDX_APPCOMPAT, ANDROIDX_CONSTRAINTLAYOUT_CORE, ANDROIDX_CORE), "androidx.constraintlayout.widget"),
 
@@ -446,7 +459,30 @@ public class BuiltInLibraries {
 
             new BuiltInLibrary(PATTERN_LOCK_VIEW, List.of(ANDROIDX_CORE, JETBRAINS_ANNOTATIONS), "com.andrognito.patternlockview"),
 
-            new BuiltInLibrary(UNITY_ADS, List.of(ANDROIDX_STARTUP_RUNTIME, ANDROIDX_LIFECYCLE_PROCESS)),
+            new BuiltInLibrary(UNITY_ADS, List.of(ANDROIDX_ACTIVITY, ANDROIDX_ANNOTATION_JVM, ANDROIDX_CORE, ANDROIDX_CORE_KTX,
+                    ANDROIDX_DATASTORE_CORE, ANDROIDX_LIFECYCLE_COMMON, ANDROIDX_LIFECYCLE_PROCESS,
+                    ANDROIDX_LIFECYCLE_VIEWMODEL, ANDROIDX_STARTUP_RUNTIME, ANDROIDX_WEBKIT,
+                    ANDROIDX_WORK_RUNTIME, ANDROIDX_WORK_RUNTIME_KTX, COHERENCELIB, JETBRAINS_KOTLIN_STDLIB,
+                    JETBRAINS_KOTLINX_COROUTINES_ANDROID, JETBRAINS_KOTLINX_COROUTINES_CORE_JVM,
+                    OKHTTP_ANDROID, OKIO_JVM, OMSDK_ANDROID, PLAY_SERVICES_APPSET, PLAY_SERVICES_CRONET,
+                    PLAY_SERVICES_TASKS, PROTOBUF_JAVALITE, PROTOBUF_KOTLIN_LITE)),
+
+            new BuiltInLibrary(ANDROIDX_DATASTORE_CORE, List.of(JETBRAINS_KOTLIN_STDLIB, JETBRAINS_KOTLINX_COROUTINES_CORE_JVM)),
+
+            new BuiltInLibrary(ANDROIDX_WEBKIT, List.of(ANDROIDX_ANNOTATION_JVM, ANDROIDX_CORE)),
+
+            new BuiltInLibrary(ANDROIDX_WORK_RUNTIME_KTX, List.of(ANDROIDX_ANNOTATION_JVM, ANDROIDX_WORK_RUNTIME,
+                    JETBRAINS_KOTLIN_STDLIB, JETBRAINS_KOTLINX_COROUTINES_CORE_JVM)),
+
+            new BuiltInLibrary(COHERENCELIB),
+
+            new BuiltInLibrary(OMSDK_ANDROID),
+
+            new BuiltInLibrary(PLAY_SERVICES_CRONET, List.of(PLAY_SERVICES_BASEMENT, PLAY_SERVICES_TASKS)),
+
+            new BuiltInLibrary(PROTOBUF_JAVALITE),
+
+            new BuiltInLibrary(PROTOBUF_KOTLIN_LITE, List.of(JETBRAINS_KOTLIN_STDLIB, PROTOBUF_JAVALITE)),
 
             new BuiltInLibrary(PLAY_SERVICES_ADS, List.of(ANDROIDX_BROWSER, ANDROIDX_COLLECTION_JVM, ANDROIDX_CORE, PLAY_SERVICES_ADS_BASE,
                     PLAY_SERVICES_ADS_IDENTIFIER, PLAY_SERVICES_ADS_LITE,
@@ -522,11 +558,23 @@ public class BuiltInLibraries {
         return getLibraryClassesJarPath(libraryName).getAbsolutePath();
     }
 
-    private static final Object UNITY_ADS_DEX_LOCK = new Object();
+    public static File getLibraryNativeLibraries(String libraryName) {
+        return new File(getLibraryPath(libraryName), "jni");
+    }
+
+    private static final Object BUNDLED_JAR_DEX_LOCK = new Object();
+
+    private static boolean isBundledJarOnlyLibrary(String libraryName) {
+        return libraryName.equals(UNITY_ADS) || libraryName.equals(OMSDK_ANDROID)
+                || libraryName.equals(COHERENCELIB) || libraryName.equals(PLAY_SERVICES_CRONET)
+                || libraryName.equals(PROTOBUF_JAVALITE) || libraryName.equals(PROTOBUF_KOTLIN_LITE)
+                || libraryName.equals(ANDROIDX_DATASTORE_CORE) || libraryName.equals(ANDROIDX_WEBKIT)
+                || libraryName.equals(ANDROIDX_WORK_RUNTIME_KTX) || libraryName.equals(LISTENABLEFUTURE);
+    }
 
     public static File getLibraryDexFile(String libraryName) {
-        if (UNITY_ADS.equals(libraryName)) {
-            ensureUnityAdsDexFromBundledJar();
+        if (isBundledJarOnlyLibrary(libraryName)) {
+            ensureDexFromBundledJar(libraryName);
         }
         return new File(EXTRACTED_BUILT_IN_LIBRARY_DEX_FILES_PATH, libraryName + ".dex");
     }
@@ -535,37 +583,35 @@ public class BuiltInLibraries {
         return getLibraryDexFile(libraryName).getAbsolutePath();
     }
 
-    /**
-     * The supplied Unity Ads 4.20.1 AAR contains classes.jar, not classes.dex.
-     * Sketchware Neo's internal builder consumes a separate DEX archive, so create
-     * the single library DEX with the same D8 implementation used by the app builder.
-     * The digest marker prevents redundant conversion and makes SDK changes invalidate it.
-     */
-    private static void ensureUnityAdsDexFromBundledJar() {
-        synchronized (UNITY_ADS_DEX_LOCK) {
-            File sdkDirectory = new File(EXTRACTED_BUILT_IN_LIBRARIES_PATH, UNITY_ADS);
-            File sdkJar = new File(sdkDirectory, "classes.jar");
-            if (!sdkJar.isFile() || sdkJar.length() == 0) {
-                // Leave normal missing-library handling to the existing library manager.
-                return;
-            }
+    private static void collectDependencyJars(String libraryName, Set<String> visited, Collection<Path> jars) {
+        Optional<BuiltInLibrary> library = BuiltInLibrary.ofName(libraryName);
+        if (!library.isPresent()) return;
+        for (String dependencyName : library.get().getDependencyNames()) {
+            if (!visited.add(dependencyName)) continue;
+            File dependencyJar = getLibraryClassesJarPath(dependencyName);
+            if (dependencyJar.isFile() && dependencyJar.length() > 0) jars.add(dependencyJar.toPath());
+            collectDependencyJars(dependencyName, visited, jars);
+        }
+    }
 
-            File omSdkJar = new File(sdkDirectory, "libs/omsdk-android-1.4.9-release.jar");
-            if (!omSdkJar.isFile() || omSdkJar.length() == 0) {
-                throw new IllegalStateException("Unity Ads 4.20.1 assets are incomplete: OM SDK JAR is missing.");
+    private static void ensureDexFromBundledJar(String libraryName) {
+        synchronized (BUNDLED_JAR_DEX_LOCK) {
+            File libraryJar = getLibraryClassesJarPath(libraryName);
+            if (!libraryJar.isFile() || libraryJar.length() == 0) {
+                return;
             }
 
             File dexDirectory = EXTRACTED_BUILT_IN_LIBRARY_DEX_FILES_PATH;
             if (!dexDirectory.isDirectory() && !dexDirectory.mkdirs()) {
                 throw new IllegalStateException("Could not create built-in DEX directory: " + dexDirectory.getAbsolutePath());
             }
-            File targetDex = new File(dexDirectory, UNITY_ADS + ".dex");
-            File marker = new File(EXTRACTED_COMPILE_ASSETS_PATH, UNITY_ADS + ".dex.sha256");
-            File temporaryDex = new File(dexDirectory, UNITY_ADS + ".dex.tmp");
-            File temporaryOutput = new File(EXTRACTED_COMPILE_ASSETS_PATH, UNITY_ADS + "-dex-build");
+            File targetDex = new File(dexDirectory, libraryName + ".dex");
+            File marker = new File(EXTRACTED_COMPILE_ASSETS_PATH, libraryName + ".dex.sha256");
+            File temporaryDex = new File(dexDirectory, libraryName + ".dex.tmp");
+            File temporaryOutput = new File(EXTRACTED_COMPILE_ASSETS_PATH, libraryName + "-dex-build");
 
             try {
-                String inputDigest = sha256File(sdkJar) + ":" + sha256File(omSdkJar);
+                String inputDigest = sha256File(libraryJar);
                 if (targetDex.isFile() && targetDex.length() > 0 && marker.isFile()
                         && inputDigest.equals(readFirstLine(marker))) {
                     return;
@@ -576,7 +622,7 @@ public class BuiltInLibraries {
                     maybeExtractAndroidJar();
                 }
                 if (!androidJar.isFile() || androidJar.length() == 0) {
-                    throw new IllegalStateException("Built-in android.jar is missing; cannot DEX Unity Ads 4.20.1.");
+                    throw new IllegalStateException("Built-in android.jar is missing; cannot DEX " + libraryName + ".");
                 }
 
                 deleteRecursively(temporaryOutput);
@@ -585,10 +631,10 @@ public class BuiltInLibraries {
                 }
 
                 Collection<Path> programFiles = new ArrayList<>();
-                programFiles.add(sdkJar.toPath());
-                programFiles.add(omSdkJar.toPath());
+                programFiles.add(libraryJar.toPath());
                 Collection<Path> libraryFiles = new ArrayList<>();
                 libraryFiles.add(androidJar.toPath());
+                collectDependencyJars(libraryName, new HashSet<>(), libraryFiles);
 
                 D8.run(D8Command.builder()
                         .setMode(CompilationMode.RELEASE)
@@ -603,28 +649,28 @@ public class BuiltInLibraries {
                 File[] generatedDexFiles = temporaryOutput.listFiles((directory, name) -> name.matches("classes([0-9]+)?\\.dex"));
                 if (generatedDexFiles == null || generatedDexFiles.length != 1
                         || !generatedDexFiles[0].isFile() || generatedDexFiles[0].length() == 0) {
-                    throw new IllegalStateException("D8 did not produce exactly one Unity Ads DEX file. Generated files: "
+                    throw new IllegalStateException("D8 did not produce exactly one DEX file for " + libraryName + ". Generated files: "
                             + (generatedDexFiles == null ? "none" : generatedDexFiles.length));
                 }
 
                 copyFile(generatedDexFiles[0], temporaryDex);
                 if (targetDex.exists() && !targetDex.delete()) {
-                    throw new IllegalStateException("Could not replace the old Unity Ads DEX: " + targetDex.getAbsolutePath());
+                    throw new IllegalStateException("Could not replace the old DEX: " + targetDex.getAbsolutePath());
                 }
                 if (!temporaryDex.renameTo(targetDex)) {
                     copyFile(temporaryDex, targetDex);
                     if (!temporaryDex.delete()) temporaryDex.deleteOnExit();
                 }
                 if (!targetDex.isFile() || targetDex.length() == 0) {
-                    throw new IllegalStateException("Unity Ads 4.20.1 DEX output is empty after generation.");
+                    throw new IllegalStateException("DEX output for " + libraryName + " is empty after generation.");
                 }
 
                 try (FileOutputStream markerOutput = new FileOutputStream(marker, false)) {
                     markerOutput.write(inputDigest.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
             } catch (Exception e) {
-                throw new IllegalStateException("Unable to generate the Unity Ads 4.20.1 runtime DEX from its bundled JARs. "
-                        + "Verify the R8/D8 runtime dependency and the extracted SDK assets.", e);
+                throw new IllegalStateException("Unable to generate the runtime DEX for built-in library " + libraryName
+                        + " from its bundled JAR. Verify the R8/D8 runtime dependency and the extracted library assets.", e);
             } finally {
                 deleteRecursively(temporaryOutput);
                 if (temporaryDex.exists()) temporaryDex.delete();

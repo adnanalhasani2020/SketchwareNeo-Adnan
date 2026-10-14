@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <group android:id="@+id/group_main" android:checkableBehavior="single">
         <item
@@ -27,17 +28,9 @@
             android:icon="@drawable/ic_mtrl_build_tools"
             android:title="Build Tools" />
         <item
-            android:id="@+id/app_signing"
-            android:icon="@drawable/ic_mtrl_key"
-            android:title="App Signing" />
-        <item
-            android:id="@+id/create_release_keystore"
-            android:icon="@drawable/ic_mtrl_key"
-            android:title="Create Release Keystore" />
-        <item
-            android:id="@+id/keystore_manager"
-            android:icon="@drawable/ic_mtrl_key"
-            android:title="Keystore Manager" />
+            android:id="@+id/system_information"
+            android:icon="@drawable/ic_mtrl_info"
+            android:title="Neo Information" />
         <item
             android:id="@+id/app_settings"
             android:icon="@drawable/ic_mtrl_settings"

@@ -225,7 +225,8 @@ public class Ix {
         var initializers = Set.of(
                 new Pair<>(builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_EMOJI2), "androidx.emoji2.text.EmojiCompatInitializer"),
                 new Pair<>(builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_LIFECYCLE_PROCESS), "androidx.lifecycle.ProcessLifecycleInitializer"),
-                new Pair<>(builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_WORK_RUNTIME), "androidx.work.WorkManagerInitializer")
+                new Pair<>(builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_WORK_RUNTIME), "androidx.work.WorkManagerInitializer"),
+                new Pair<>(builtInLibraryManager.containsLibrary(BuiltInLibraries.OKHTTP_ANDROID), "okhttp3.internal.platform.PlatformInitializer")
         );
 
         if (initializers.stream().anyMatch(initializer -> initializer.first) || c.isUnityAdsEnabled) {
@@ -465,7 +466,7 @@ public class Ix {
             writePermission(a, "com.google.android.gms.permission.AD_ID");
             writePermission(a, "android.permission.ACCESS_NETWORK_STATE");
             writePermission(a, "android.permission.INTERNET");
-            // Match the Unity Ads 4.20.1 AAR manifest. These permissions are declared
+            // Match the Unity Ads 4.21.0 AAR manifest. These permissions are declared
             // by the SDK regardless of targetSdkVersion; do not silently drop them when
             // generating a manifest without Android's normal AAR manifest merger.
             writePermission(a, "android.permission.ACCESS_ADSERVICES_TOPICS");
@@ -528,7 +529,7 @@ public class Ix {
                 queries.addChildNode(intent);
             }
             if (c.isUnityAdsEnabled) {
-                // Unity Ads 4.20.1 manifest queries this attribution referral action on Android 11+.
+                // Unity Ads 4.21.0 manifest queries this attribution referral action on Android 11+.
                 XmlBuilder referralIntent = new XmlBuilder("intent");
                 XmlBuilder referralAction = new XmlBuilder("action");
                 referralAction.addAttribute("android", "name", "com.attribution.REFERRAL_PROVIDER");
@@ -678,7 +679,7 @@ public class Ix {
             applicationTag.addChildNode(testingActivity);
         }
         if (c.isUnityAdsEnabled) {
-            // Unity Ads 4.20.1's bundled AAR declares FullScreenWebViewDisplay only.
+            // Unity Ads 4.21.0's bundled AAR declares FullScreenWebViewDisplay and AdTaskRemovalDetectionService.
             // Do not emit obsolete AdUnitActivity class names from older SDK versions.
             XmlBuilder unityActivity = new XmlBuilder("activity");
             unityActivity.addAttribute("android", "name", "com.unity3d.ads.adplayer.FullScreenWebViewDisplay");
@@ -688,6 +689,11 @@ public class Ix {
             unityActivity.addAttribute("android", "hardwareAccelerated", "true");
             unityActivity.addAttribute("android", "theme", "@android:style/Theme.NoTitleBar.Fullscreen");
             applicationTag.addChildNode(unityActivity);
+            XmlBuilder unityTaskRemovalService = new XmlBuilder("service");
+            unityTaskRemovalService.addAttribute("android", "name", "com.unity3d.ads.adplayer.AdTaskRemovalDetectionService");
+            unityTaskRemovalService.addAttribute("android", "exported", "false");
+            unityTaskRemovalService.addAttribute("android", "stopWithTask", "false");
+            applicationTag.addChildNode(unityTaskRemovalService);
         }
         if (builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_ROOM_RUNTIME)) {
             writeAndroidxRoomService(applicationTag);
@@ -696,7 +702,7 @@ public class Ix {
         if (builtInLibraryManager.containsLibrary(BuiltInLibraries.ANDROIDX_WORK_RUNTIME)) {
             writeAndroidxWorkRuntimeTags(applicationTag);
         }
-        if (c.isFirebaseEnabled || c.isAdMobEnabled || c.isMapUsed) {
+        if (c.isFirebaseEnabled || c.isAdMobEnabled || c.isMapUsed || c.isUnityAdsEnabled) {
             writeGMSVersion(applicationTag);
         }
         if (c.isFirebaseEnabled) {

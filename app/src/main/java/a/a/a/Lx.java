@@ -115,7 +115,7 @@ public class Lx {
         }
 
         if (metadata.isUnityAdsEnabled) {
-            content.append("implementation 'com.unity3d.ads:unity-ads:4.20.1'\r\n");
+            content.append("implementation 'com.unity3d.ads:unity-ads:4.21.0'\r\n");
         }
 
         if (isLibraryNotExcluded(BuiltInLibraries.PLAY_SERVICES_MAPS, excludedLibraries) && metadata.isMapUsed) {

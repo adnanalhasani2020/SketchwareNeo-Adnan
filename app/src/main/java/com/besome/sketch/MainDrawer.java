@@ -14,7 +14,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.IdRes;
 import androidx.annotation.NonNull;
@@ -23,11 +22,8 @@ import androidx.annotation.StringRes;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 
-import com.besome.sketch.tools.NewKeyStoreActivity;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
-import com.google.android.gms.auth.api.signin.GoogleSignInClient;
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.material.navigation.NavigationView;
 import com.google.android.material.shape.MaterialShapeDrawable;
 import com.google.android.material.shape.ShapeAppearanceModel;
@@ -172,10 +168,6 @@ public class MainDrawer extends NavigationView {
             Intent intent = new Intent(activity, AiSettingsActivity.class);
             intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             activity.startActivity(intent);
-        } else if (id == R.id.create_release_keystore || id == R.id.keystore_manager) {
-            Intent intent = new Intent(activity, NewKeyStoreActivity.class);
-            intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            activity.startActivity(intent);
         } else if (id == R.id.build_tools) {
             Intent intent = new Intent(activity, NativeToolsActivity.class);
             intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -192,8 +184,10 @@ public class MainDrawer extends NavigationView {
             Intent intent = new Intent(activity, CloudBackupManagerActivity.class);
             intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             activity.startActivity(intent);
-        } else if (id == R.id.app_signing) {
-            SketchwareUtil.toast("App Signing: Coming soon", Toast.LENGTH_SHORT);
+        } else if (id == R.id.system_information) {
+            Intent intent = new Intent(activity, com.besome.sketch.help.ProgramInfoActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            activity.startActivity(intent);
         } else if (id == R.id.nav_home) {
             if (activity instanceof pro.sketchware.activities.main.activities.MainActivity) {
                 DrawerLayout dl = activity.findViewById(R.id.drawer_layout);

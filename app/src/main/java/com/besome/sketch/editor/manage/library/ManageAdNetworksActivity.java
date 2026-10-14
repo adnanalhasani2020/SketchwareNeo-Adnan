@@ -1,6 +1,5 @@
 package com.besome.sketch.editor.manage.library;
 
-import android.app.ProgressDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -26,14 +25,9 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import a.a.a.iC;
 import mod.jbk.editor.manage.library.LibrarySettingsImporter;
-import pro.sketchware.activities.editor.gradle.GradleSyncEngine;
-import pro.sketchware.activities.editor.gradle.UnityAdsDependencyManager;
 import pro.sketchware.databinding.ActivityManageAdNetworksBinding;
 import pro.sketchware.databinding.DialogUnityPlacementBinding;
 import pro.sketchware.databinding.ItemUnityPlacementBinding;
@@ -44,14 +38,7 @@ public class ManageAdNetworksActivity extends BaseAppCompatActivity {
     private String scId;
     private ProjectLibraryBean networkBean;
     private boolean restoring;
-    private boolean unityDependencySyncInProgress;
-    
-    private final ExecutorService unityDependencyExecutor = Executors.newSingleThreadExecutor();
-    private final AtomicBoolean unityDependencySyncCancelled = new AtomicBoolean(false);
-    
-    @Nullable
-    private ProgressDialog unityDependencyProgressDialog;
-    
+
     private ActivityManageAdNetworksBinding binding;
 
     @Override
@@ -341,7 +328,6 @@ public class ManageAdNetworksActivity extends BaseAppCompatActivity {
     }
 
     private void finishWithResult() {
-        if (unityDependencySyncInProgress) return;
         saveGameId(false);
         if (binding.switchAdmob.isChecked()) {
             String appId = networkBean.appId == null ? "" : networkBean.appId.trim();
@@ -370,106 +356,7 @@ public class ManageAdNetworksActivity extends BaseAppCompatActivity {
                 return;
             }
         }
-        if (binding.switchUnity.isChecked() && !UnityAdsDependencyManager.isReady(scId)) {
-            syncUnityDependenciesThenSave();
-            return;
-        }
-        if (!binding.switchUnity.isChecked()) {
-            try {
-                UnityAdsDependencyManager.removeManagedDependencyIfDisabled(scId);
-            } catch (Exception e) {
-                new MaterialAlertDialogBuilder(this)
-                        .setTitle("Could not update Unity Ads dependencies")
-                        .setMessage(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
-                        .setPositiveButton("OK", null)
-                        .show();
-                return;
-            }
-        }
         saveAndReturnResult();
-    }
-
-    private void syncUnityDependenciesThenSave() {
-        if (unityDependencySyncInProgress) return;
-        unityDependencySyncInProgress = true;
-        unityDependencySyncCancelled.set(false);
-        unityDependencyProgressDialog = new ProgressDialog(this);
-        unityDependencyProgressDialog.setTitle("Preparing Unity Ads 4.20.1");
-        unityDependencyProgressDialog.setMessage("Resolving SDK and required libraries…");
-        unityDependencyProgressDialog.setIndeterminate(true);
-        unityDependencyProgressDialog.setCancelable(false);
-        unityDependencyProgressDialog.setCanceledOnTouchOutside(false);
-        unityDependencyProgressDialog.show();
-
-        unityDependencyExecutor.execute(() -> {
-            StringBuilder recentLogs = new StringBuilder();
-            GradleSyncEngine.Result result;
-            try {
-                result = UnityAdsDependencyManager.sync(this, scId, new GradleSyncEngine.Listener() {
-                    @Override
-                    public void onStatus(String message, int done, int total) {
-                        runOnUiThread(() -> {
-                            if (unityDependencyProgressDialog != null && unityDependencyProgressDialog.isShowing()
-                                    && !isFinishing() && !isDestroyed()) {
-                                unityDependencyProgressDialog.setMessage(message + " (" + done + "/" + total + ")");
-                            }
-                        });
-                    }
-
-                    @Override
-                    public void onDependencyState(String key, GradleSyncEngine.DepState state, @Nullable String error) {
-                        if (state == GradleSyncEngine.DepState.FAILED && error != null) {
-                            synchronized (recentLogs) {
-                                recentLogs.append(error).append('\n');
-                            }
-                        }
-                    }
-
-                    @Override
-                    public void onLog(String line) {
-                        synchronized (recentLogs) {
-                            recentLogs.append(line).append('\n');
-                            if (recentLogs.length() > 10000) recentLogs.delete(0, recentLogs.length() - 10000);
-                        }
-                    }
-                }, unityDependencySyncCancelled);
-            } catch (Throwable error) {
-                result = UnityAdsDependencyManager.failureResult(
-                        error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage(),
-                        unityDependencySyncCancelled.get());
-            }
-            final GradleSyncEngine.Result completed = result;
-            final String logs;
-            synchronized (recentLogs) {
-                logs = recentLogs.toString();
-            }
-            runOnUiThread(() -> {
-                unityDependencySyncInProgress = false;
-                if (unityDependencyProgressDialog != null && unityDependencyProgressDialog.isShowing()) {
-                    unityDependencyProgressDialog.dismiss();
-                }
-                unityDependencyProgressDialog = null;
-                if (isFinishing() || isDestroyed()) return;
-                if (completed.success && UnityAdsDependencyManager.isReady(scId)) {
-                    Toast.makeText(this, "Unity Ads 4.20.1 and its dependencies are ready", Toast.LENGTH_LONG).show();
-                    saveAndReturnResult();
-                } else {
-                    String message = completed.message == null ? "Unity Ads dependency sync failed." : completed.message;
-                    if (!logs.trim().isEmpty()) {
-                        String[] lines = logs.trim().split("\n");
-                        int start = Math.max(0, lines.length - 8);
-                        StringBuilder tail = new StringBuilder();
-                        for (int i = start; i < lines.length; i++) tail.append(lines[i]).append('\n');
-                        message += "\n\nLast sync messages:\n" + tail.toString().trim();
-                    }
-                    new MaterialAlertDialogBuilder(this)
-                            .setTitle("Unity Ads dependencies were not prepared")
-                            .setMessage(message + "\n\nSettings were not saved. Check internet access, then retry.")
-                            .setPositiveButton("OK", null)
-                            .show();
-                }
-            });
-        });
     }
 
     private void saveAndReturnResult() {
@@ -486,18 +373,12 @@ public class ManageAdNetworksActivity extends BaseAppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (unityDependencySyncInProgress) unityDependencySyncCancelled.set(true);
         setResult(RESULT_CANCELED);
         finish();
     }
 
     @Override
     public void onDestroy() {
-        if (unityDependencySyncInProgress) unityDependencySyncCancelled.set(true);
-        if (unityDependencyProgressDialog != null && unityDependencyProgressDialog.isShowing()) {
-            unityDependencyProgressDialog.dismiss();
-        }
-        unityDependencyExecutor.shutdownNow();
         binding = null;
         super.onDestroy();
     }

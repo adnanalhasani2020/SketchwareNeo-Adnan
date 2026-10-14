@@ -73,7 +73,6 @@ import mod.pranav.build.JarBuilder;
 import mod.pranav.viewbinding.ViewBindingBuilder;
 import pro.sketchware.SketchApplication;
 import pro.sketchware.util.library.BuiltInLibraryManager;
-import pro.sketchware.activities.editor.gradle.UnityAdsDependencyManager;
 import pro.sketchware.utility.FilePathUtil;
 import mod.hey.studios.activity.managers.cpp.CppExporter;
 import mod.hey.studios.activity.managers.cpp.NativeCompiler;
@@ -654,6 +653,13 @@ public class ProjectBuilder {
             for (String nativeLibraryDirectory : mll.getNativeLibs()) {
                 apkBuilder.addNativeLibraries(new File(nativeLibraryDirectory));
             }
+
+            for (Jp library : builtInLibraryManager.getLibraries()) {
+                File builtInNativeLibraries = BuiltInLibraries.getLibraryNativeLibraries(library.getName());
+                if (builtInNativeLibraries.isDirectory()) {
+                    apkBuilder.addNativeLibraries(builtInNativeLibraries);
+                }
+            }
             
             if (CppExporter.hasCompiledNativeLibs(yq)) {
                 apkBuilder.addNativeLibraries(new File(yq.compiledNativeLibsPath));
@@ -810,12 +816,7 @@ public class ProjectBuilder {
             builtInLibraryManager.addLibrary(BuiltInLibraries.PLAY_SERVICES_ADS);
         }
         if (yq.N.isUnityAdsEnabled) {
-            // Unity Ads 4.20.1 must be supplied by its complete Maven dependency graph,
-            // not by Neo's older bundled 4.21.0 classes.jar/classes.dex pair.
-            UnityAdsDependencyManager.requireReadyForBuild(yq.sc_id);
-            for (String libraryName : UnityAdsDependencyManager.getProvidedBuiltInLibraries(yq.sc_id)) {
-                builtInLibraryManager.addLibrary(libraryName);
-            }
+            builtInLibraryManager.addLibrary(BuiltInLibraries.UNITY_ADS);
         }
         if (yq.N.isGsonUsed) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.GSON);
@@ -823,10 +824,7 @@ public class ProjectBuilder {
         if (yq.N.isGlideUsed) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.GLIDE);
         }
-        // Unity Ads 4.20.1 requires OkHttp 3.x. Do not also bundle Neo's OkHttp 5.x
-        // when both the Unity SDK and HTTP/3 helper are used; use the resolved compatible
-        // OkHttp dependency from Unity's graph for this build.
-        if (yq.N.isHttp3Used && !yq.N.isUnityAdsEnabled) {
+        if (yq.N.isHttp3Used) {
             builtInLibraryManager.addLibrary(BuiltInLibraries.OKHTTP_ANDROID);
         }
 

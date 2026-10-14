@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    
+    <!-- Base Background -->
+    <path
+        android:fillColor="?attr/colorPrimaryContainer"
+        android:pathData="M0,0 h320 v180 h-320 z" />
+
+    <!-- Fluid Shape 1 (Tertiary) -->
+    <path
+        android:fillColor="?attr/colorTertiaryContainer"
+        android:fillAlpha="0.75"
+        android:pathData="M-40,-40 C100,20 180,-30 240,60 C300,150 180,220 80,180 C-20,140 -80,40 -40,-40 Z" />
+
+    <!-- Fluid Shape 2 (Primary Overlay) -->
+    <path
+        android:fillColor="?attr/colorPrimary"
+        android:fillAlpha="0.4"
+        android:pathData="M350,220 C220,180 120,250 60,140 C0,30 180,-20 280,40 C380,100 420,180 350,220 Z" />
+
+    <!-- Fluid Shape 3 (Secondary) -->
+    <path
+        android:fillColor="?attr/colorSecondaryContainer"
+        android:fillAlpha="0.6"
+        android:pathData="M160,20 C280,120 120,240 20,140 C-80,40 40,-80 160,20 Z" />
+        
+    <!-- Glassmorphic overlay effect -->
+    <path
+        android:fillColor="#15FFFFFF"
+        android:pathData="M0,0 h320 v180 h-320 z" />
+</vector>
