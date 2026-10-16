@@ -4,32 +4,37 @@
     android:height="180dp"
     android:viewportWidth="320"
     android:viewportHeight="180">
-    
-    <!-- Base Background -->
-    <path
-        android:fillColor="?attr/colorPrimaryContainer"
-        android:pathData="M0,0 h320 v180 h-320 z" />
 
-    <!-- Fluid Shape 1 (Tertiary) -->
     <path
         android:fillColor="?attr/colorTertiaryContainer"
-        android:fillAlpha="0.75"
-        android:pathData="M-40,-40 C100,20 180,-30 240,60 C300,150 180,220 80,180 C-20,140 -80,40 -40,-40 Z" />
+        android:fillAlpha="0.72"
+        android:pathData="M264,-16 C302,-10 330,18 338,48 C347,80 325,108 298,119 C272,129 243,109 231,86 C216,58 228,17 264,-16 Z" />
 
-    <!-- Fluid Shape 2 (Primary Overlay) -->
     <path
-        android:fillColor="?attr/colorPrimary"
-        android:fillAlpha="0.4"
-        android:pathData="M350,220 C220,180 120,250 60,140 C0,30 180,-20 280,40 C380,100 420,180 350,220 Z" />
+        android:fillColor="?attr/colorPrimaryContainer"
+        android:fillAlpha="0.72"
+        android:strokeColor="?attr/colorOutlineVariant"
+        android:strokeAlpha="0.78"
+        android:strokeWidth="1.2"
+        android:pathData="M254,3 C259,-1 265,-1 270,4 L319,52 C324,57 324,63 319,68 L270,117 C265,122 259,122 254,117 L205,68 C200,63 200,57 205,52 Z" />
 
-    <!-- Fluid Shape 3 (Secondary) -->
     <path
         android:fillColor="?attr/colorSecondaryContainer"
-        android:fillAlpha="0.6"
-        android:pathData="M160,20 C280,120 120,240 20,140 C-80,40 40,-80 160,20 Z" />
-        
-    <!-- Glassmorphic overlay effect -->
+        android:fillAlpha="0.52"
+        android:pathData="M259,17 C262,14 266,14 269,17 L306,54 C309,57 309,61 306,64 L269,101 C266,104 262,104 259,101 L222,64 C219,61 219,57 222,54 Z" />
+
     <path
-        android:fillColor="#15FFFFFF"
-        android:pathData="M0,0 h320 v180 h-320 z" />
+        android:fillColor="?attr/colorPrimary"
+        android:fillAlpha="0.28"
+        android:pathData="M276,27 C290,31 299,40 302,52 C304,62 296,69 286,66 C277,63 270,56 268,47 C266,38 269,31 276,27 Z" />
+
+    <path
+        android:fillColor="?attr/colorTertiary"
+        android:fillAlpha="0.9"
+        android:pathData="M205,81 C214,81 221,88 221,97 C221,106 214,113 205,113 C196,113 189,106 189,97 C189,88 196,81 205,81 Z" />
+
+    <path
+        android:fillColor="?attr/colorSecondary"
+        android:fillAlpha="0.92"
+        android:pathData="M307,15 C313,15 318,20 318,26 C318,32 313,37 307,37 C301,37 296,32 296,26 C296,20 301,15 307,15 Z" />
 </vector>

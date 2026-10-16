@@ -8,6 +8,9 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.PixelFormat;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
@@ -29,8 +32,11 @@ import android.widget.TextView;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.view.GravityCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -41,6 +47,7 @@ import com.besome.sketch.beans.ProjectLibraryBean;
 import com.besome.sketch.beans.ViewBean;
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.tabs.TabLayout;
 
@@ -86,6 +93,8 @@ import pro.sketchware.R;
 import pro.sketchware.activities.appcompat.ManageAppCompatActivity;
 import pro.sketchware.activities.preview.LayoutPreviewActivity;
 import pro.sketchware.databinding.ViewCodeEditorBinding;
+import pro.sketchware.databinding.ViewCodeEditorExplorerItemBinding;
+import pro.sketchware.databinding.ViewCodeEditorOptionsBinding;
 import pro.sketchware.managers.inject.InjectRootLayoutManager;
 import pro.sketchware.tools.ViewBeanParser;
 import pro.sketchware.utility.EditorUtils;
@@ -125,6 +134,10 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
 
     private final Handler diagHandler = new Handler(Looper.getMainLooper());
     private Runnable diagRunnable;
+    private final List<Diagnostic> liveDiagnostics = new ArrayList<>();
+    private final List<Diagnostic> buildDiagnostics = new ArrayList<>();
+    private DiagnosticsAdapter diagnosticsAdapter;
+    private Diagnostic pendingDiagnosticJump;
 
     private final BroadcastReceiver buildDiagnosticsReceiver = new BroadcastReceiver() {
         @Override
@@ -132,7 +145,9 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
             String output = intent.getStringExtra("build_output");
             if (output != null) {
                 List<Diagnostic> parsedErrors = GradleLogParser.parseLogs(output);
-                showDiagnostics(parsedErrors);
+                buildDiagnostics.clear();
+                if (parsedErrors != null) buildDiagnostics.addAll(parsedErrors);
+                refreshDiagnostics(!buildDiagnostics.isEmpty());
             }
         }
     };
@@ -145,9 +160,7 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                 return;
             }
             if (binding.searchCard != null && binding.searchCard.getVisibility() == View.VISIBLE) {
-                try { editor.getSearcher().stopSearch(); } catch (Exception ignored) { }
-                binding.searchCard.setVisibility(View.GONE);
-                if (binding.findEdit != null) binding.findEdit.setText("");
+                hideSearchPanel();
                 return;
             }
             if (hasUnsavedTabs()) {
@@ -226,6 +239,14 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
 
         if (binding.appBarLayout != null) UI.addSystemWindowInsetToPadding(binding.appBarLayout, true, true, true, false);
         UI.addSystemWindowInsetToMargin(editor, true, false, true, false);
+        getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (binding.editorContentRoot != null) {
+            ViewCompat.setOnApplyWindowInsetsListener(binding.editorContentRoot, (view, windowInsets) -> {
+                int imeBottom = windowInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+                view.setPadding(view.getPaddingLeft(), view.getPaddingTop(), view.getPaddingRight(), imeBottom);
+                return windowInsets;
+            });
+        }
 
         if (binding.navViewExplorer != null) UI.addSystemWindowInsetToPadding(binding.navViewExplorer, true, true, true, true);
     }
@@ -310,32 +331,32 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
     }
 
     private Drawable resolveProjectIcon() {
-        int iconSize = Math.max(1, dp(30f));
-        ArrayList<File> candidates = new ArrayList<>();
-        String root = FileUtil.getExternalStorageDir();
-        candidates.add(new File(root, ".sketchware/resources/icons/" + sc_id + "/icon.png"));
-        candidates.add(new File(root, ".sketchware/resources/icons/" + sc_id + "/mipmaps/mipmap-xxxhdpi/ic_launcher.png"));
-        candidates.add(new File(root, ".sketchware/resources/icons/" + sc_id + "/mipmaps/mipmap-xxhdpi/ic_launcher.png"));
-        candidates.add(new File(root, ".sketchware/resources/icons/" + sc_id + "/temp_icons/mipmap-xxxhdpi/ic_launcher.png"));
-        candidates.add(new File(root, ".sketchware/resources/icons/" + sc_id + "/temp_icons/mipmap-xxhdpi/ic_launcher.png"));
-        candidates.add(new File(root, ".sketchware/data/" + sc_id + "/files/app-icon/icon.png"));
-        candidates.add(new File(root, ".sketchware/data/" + sc_id + "/files/app-icon/ic_launcher.png"));
-        candidates.add(new File(root, ".sketchware/data/" + sc_id + "/files/app-icon/mipmap-xxxhdpi/ic_launcher.png"));
-        for (File candidate : candidates) {
-            if (candidate.isFile() && candidate.canRead()) {
-                Bitmap bitmap = BitmapFactory.decodeFile(candidate.getAbsolutePath());
-                if (bitmap != null) {
-                    Bitmap scaled = Bitmap.createScaledBitmap(bitmap, iconSize, iconSize, true);
-                    if (scaled != bitmap) bitmap.recycle();
-                    return new BitmapDrawable(getResources(), scaled);
+        int iconSize = Math.max(1, dp(28f));
+        try {
+            HashMap<String, Object> metadata = a.a.a.lC.b(sc_id);
+            if (metadata != null && a.a.a.yB.a(metadata, "custom_icon")) {
+                File iconFile = new File(a.a.a.wq.e() + File.separator + sc_id, "icon.png");
+                if (iconFile.isFile() && iconFile.canRead()) {
+                    BitmapFactory.Options bounds = new BitmapFactory.Options();
+                    bounds.inJustDecodeBounds = true;
+                    BitmapFactory.decodeFile(iconFile.getAbsolutePath(), bounds);
+                    int sampleSize = 1;
+                    while (bounds.outWidth / (sampleSize * 2) >= iconSize && bounds.outHeight / (sampleSize * 2) >= iconSize) {
+                        sampleSize *= 2;
+                    }
+                    BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
+                    decodeOptions.inSampleSize = sampleSize;
+                    Bitmap bitmap = BitmapFactory.decodeFile(iconFile.getAbsolutePath(), decodeOptions);
+                    if (bitmap != null) {
+                        Bitmap scaled = Bitmap.createScaledBitmap(bitmap, iconSize, iconSize, true);
+                        if (scaled != bitmap) bitmap.recycle();
+                        return new FixedSizeDrawable(new BitmapDrawable(getResources(), scaled), iconSize);
+                    }
                 }
             }
-        }
-        try {
-            Drawable fallback = AppCompatResources.getDrawable(this, R.mipmap.ic_launcher);
-            if (fallback != null) return fallback;
         } catch (Exception ignored) { }
-        return AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_android);
+        Drawable fallback = AppCompatResources.getDrawable(this, R.drawable.sketch_app_icon);
+        return fallback == null ? null : new FixedSizeDrawable(fallback, iconSize);
     }
 
     private void setupTabs() {
@@ -410,6 +431,31 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                 tab == activeTab ? R.attr.colorPrimary : R.attr.colorOnSurface));
     }
 
+    private static final class FixedSizeDrawable extends Drawable {
+        private final Drawable delegate;
+        private final int size;
+
+        FixedSizeDrawable(Drawable delegate, int size) {
+            this.delegate = delegate;
+            this.size = size;
+        }
+
+        @Override public int getIntrinsicWidth() { return size; }
+
+        @Override public int getIntrinsicHeight() { return size; }
+
+        @Override public void draw(@NonNull Canvas canvas) {
+            delegate.setBounds(getBounds());
+            delegate.draw(canvas);
+        }
+
+        @Override public void setAlpha(int alpha) { delegate.setAlpha(alpha); }
+
+        @Override public void setColorFilter(@Nullable ColorFilter colorFilter) { delegate.setColorFilter(colorFilter); }
+
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
+
     private static final class EditorTab {
         final String title;
         final String path;
@@ -438,6 +484,7 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
 
     private void registerEditorContentListener() {
         if (editorContentListener != null) {
+            editor.getText().removeContentListener(editorContentListener);
             editor.getText().addContentListener(editorContentListener);
         }
     }
@@ -658,7 +705,7 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
         binding.rvExplorer.setLayoutManager(new LinearLayoutManager(this));
         explorerAdapter = new ExplorerTreeAdapter(buildExplorerTree());
         binding.rvExplorer.setAdapter(explorerAdapter);
-        if (binding.tvExplorerProjectId != null) binding.tvExplorerProjectId.setText(sc_id == null ? "" : sc_id);
+        if (binding.tvExplorerProjectId != null) binding.tvExplorerProjectId.setText(sc_id == null ? projectName : projectName + " \u00b7 " + sc_id);
         if (binding.etExplorerSearch != null) {
             binding.etExplorerSearch.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
@@ -1033,13 +1080,18 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
         updateMenuState();
         if (diagRunnable != null) diagHandler.removeCallbacks(diagRunnable);
         diagGeneration.incrementAndGet();
+        liveDiagnostics.clear();
+        refreshDiagnostics(false);
         if (filename != null && filename.toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) {
             triggerRealtimeDiagnostics();
-        } else {
-            updateIssueStatus(java.util.Collections.emptyList());
-            if (diagnosticsBehavior != null) diagnosticsBehavior.setState(BottomSheetBehavior.STATE_HIDDEN);
         }
         updateFindResults();
+        if (explorerAdapter != null) explorerAdapter.notifyDataSetChanged();
+        if (pendingDiagnosticJump != null) {
+            Diagnostic jump = pendingDiagnosticJump;
+            pendingDiagnosticJump = null;
+            if (diagnosticFileMatches(jump.fileName, filename, target.path)) editor.post(() -> jumpToDiagnosticLocation(jump));
+        }
     }
 
     private void closeTab(EditorTab target) {
@@ -1128,60 +1180,66 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
             for (ExplorerNode child : node.children) addMatches(child);
         }
 
+        ExplorerNode findNode(String fileName) {
+            return findNode(root, fileName);
+        }
+
+        private ExplorerNode findNode(ExplorerNode node, String fileName) {
+            if (!node.directory && diagnosticFileMatches(fileName, node.name, node.file == null ? null : node.file.getAbsolutePath())) {
+                return node;
+            }
+            for (ExplorerNode child : node.children) {
+                ExplorerNode found = findNode(child, fileName);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        private boolean isActiveNode(ExplorerNode node) {
+            if (activeTab == null || node.directory) return false;
+            if (node.layoutBean != null) return activeTab.databaseLayout && node.layoutBean.getXmlName().equals(activeTab.title);
+            return node.file != null && activeTab.path != null
+                    && node.file.getAbsolutePath().equals(new File(activeTab.path).getAbsolutePath());
+        }
+
         @NonNull @Override
         public NodeHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            LinearLayout row = new LinearLayout(parent.getContext());
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setMinimumHeight(dp(44f));
-            row.setPadding(dp(12f), dp(6f), dp(12f), dp(6f));
-            TypedValue outValue = new TypedValue();
-            parent.getContext().getTheme().resolveAttribute(android.R.attr.selectableItemBackground, outValue, true);
-            row.setBackgroundResource(outValue.resourceId);
-            
-            ImageView chevron = new ImageView(parent.getContext());
-            row.addView(chevron, new LinearLayout.LayoutParams(dp(20f), dp(20f)));
-            
-            ImageView icon = new ImageView(parent.getContext());
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(22f), dp(22f));
-            iconParams.setMarginStart(dp(6f));
-            row.addView(icon, iconParams);
-            
-            TextView title = new TextView(parent.getContext());
-            title.setSingleLine(true);
-            title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-            title.setTextSize(14f);
-            title.setTextColor(ThemeUtils.getColor(parent.getContext(), R.attr.colorOnSurface));
-            LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
-            titleParams.setMarginStart(dp(12f));
-            row.addView(title, titleParams);
-            
-            return new NodeHolder(row, chevron, icon, title);
+            return new NodeHolder(ViewCodeEditorExplorerItemBinding.inflate(getLayoutInflater(), parent, false));
         }
 
         @Override public void onBindViewHolder(@NonNull NodeHolder holder, int position) {
             ExplorerNode node = visibleNodes.get(position);
-            ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) holder.itemView.getLayoutParams();
-            if (params != null) {
-                params.setMarginStart(dp(node.depth * 14f));
-                holder.itemView.setLayoutParams(params);
+            ViewCodeEditorExplorerItemBinding row = holder.binding;
+            ViewGroup.LayoutParams indentParams = row.explorerItemIndent.getLayoutParams();
+            indentParams.width = query.isEmpty() ? dp(node.depth * 12f) : 0;
+            row.explorerItemIndent.setLayoutParams(indentParams);
+            row.explorerItemName.setText(node.name);
+            row.explorerItemChevron.setVisibility(node.directory ? View.VISIBLE : View.INVISIBLE);
+            row.explorerItemChevron.setImageResource(node.expanded ? R.drawable.ic_mtrl_arrow_down : R.drawable.ic_mtrl_arrow_right);
+            row.explorerItemChevron.setColorFilter(ThemeUtils.getColor(ViewCodeEditorActivity.this, R.attr.colorOnSurfaceVariant));
+
+            boolean selected = isActiveNode(node);
+            int iconTint = ThemeUtils.getColor(ViewCodeEditorActivity.this,
+                    selected ? R.attr.colorOnSecondaryContainer : node.directory ? R.attr.colorPrimary : R.attr.colorOnSurfaceVariant);
+            String lowerName = node.name.toLowerCase(java.util.Locale.ROOT);
+            if (node.directory) row.explorerItemIcon.setImageResource(node.expanded ? R.drawable.ic_mtrl_folder_open : R.drawable.ic_mtrl_folder);
+            else if (lowerName.endsWith(".java")) row.explorerItemIcon.setImageResource(R.drawable.ic_mtrl_java);
+            else if (lowerName.endsWith(".gradle")) row.explorerItemIcon.setImageResource(R.drawable.ic_mtrl_gradle);
+            else if (lowerName.endsWith(".xml")) row.explorerItemIcon.setImageResource(R.drawable.ic_mtrl_code);
+            else row.explorerItemIcon.setImageResource(R.drawable.ic_mtrl_file);
+            row.explorerItemIcon.setColorFilter(iconTint);
+            row.explorerItemName.setTextColor(ThemeUtils.getColor(ViewCodeEditorActivity.this,
+                    selected ? R.attr.colorOnSecondaryContainer : R.attr.colorOnSurface));
+            if (selected) {
+                android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+                background.setColor(ThemeUtils.getColor(ViewCodeEditorActivity.this, R.attr.colorSecondaryContainer));
+                background.setCornerRadius(dp(10f));
+                row.explorerItemRoot.setBackground(background);
+            } else {
+                row.explorerItemRoot.setBackground(null);
             }
-            holder.title.setText(node.name);
-            holder.chevron.setVisibility(node.directory ? View.VISIBLE : View.INVISIBLE);
-            holder.chevron.setImageResource(node.expanded ? R.drawable.ic_mtrl_arrow_down : R.drawable.ic_mtrl_arrow_right);
-            
-            int tint = ThemeUtils.getColor(ViewCodeEditorActivity.this,
-                    node.directory ? R.attr.colorPrimary : R.attr.colorOnSurfaceVariant);
-            holder.chevron.setColorFilter(ThemeUtils.getColor(ViewCodeEditorActivity.this, R.attr.colorOnSurfaceVariant));
-            
-            if (node.directory) holder.icon.setImageResource(node.expanded ? R.drawable.ic_mtrl_folder_open : R.drawable.ic_mtrl_folder);
-            else if (node.name.toLowerCase(java.util.Locale.ROOT).endsWith(".java")) holder.icon.setImageResource(R.drawable.ic_mtrl_java);
-            else if (node.name.toLowerCase(java.util.Locale.ROOT).endsWith(".gradle")) holder.icon.setImageResource(R.drawable.ic_mtrl_gradle);
-            else if (node.name.toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) holder.icon.setImageResource(R.drawable.ic_mtrl_code);
-            else holder.icon.setImageResource(R.drawable.ic_mtrl_file);
-            holder.icon.setColorFilter(tint);
-            
-            holder.itemView.setOnClickListener(v -> {
+
+            row.explorerItemRoot.setOnClickListener(v -> {
                 if (node.directory) {
                     node.expanded = !node.expanded;
                     rebuild();
@@ -1194,10 +1252,10 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
         @Override public int getItemCount() { return visibleNodes.size(); }
 
         class NodeHolder extends RecyclerView.ViewHolder {
-            final ImageView chevron, icon;
-            final TextView title;
-            NodeHolder(View view, ImageView chevron, ImageView icon, TextView title) {
-                super(view); this.chevron = chevron; this.icon = icon; this.title = title;
+            final ViewCodeEditorExplorerItemBinding binding;
+            NodeHolder(ViewCodeEditorExplorerItemBinding binding) {
+                super(binding.getRoot());
+                this.binding = binding;
             }
         }
     }
@@ -1208,8 +1266,9 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
         if (diagRunnable != null) diagHandler.removeCallbacks(diagRunnable);
         final int myGen = diagGeneration.incrementAndGet();
         diagRunnable = () -> {
-            String text = editor.getText().toString();
-            if (filename != null && filename.endsWith(".xml")) {
+            final String text = editor.getText().toString();
+            final String diagFile = filename;
+            if (diagFile != null && diagFile.toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) {
                 new Thread(() -> {
                     List<Diagnostic> diags = new ArrayList<>();
                     try {
@@ -1217,37 +1276,111 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                         DocumentBuilder builder = factory.newDocumentBuilder();
                         builder.setErrorHandler(new org.xml.sax.ErrorHandler() {
                             @Override public void warning(org.xml.sax.SAXParseException e) {
-                                diags.add(new Diagnostic(Diagnostic.Severity.WARNING, filename, e.getLineNumber(), e.getColumnNumber(), humanizeXmlError(e)));
+                                diags.add(new Diagnostic(Diagnostic.Severity.WARNING, diagFile, e.getLineNumber(), e.getColumnNumber(), diagnosticMessage(e)));
                             }
                             @Override public void error(org.xml.sax.SAXParseException e) {
-                                diags.add(new Diagnostic(Diagnostic.Severity.ERROR, filename, e.getLineNumber(), e.getColumnNumber(), humanizeXmlError(e)));
+                                diags.add(new Diagnostic(Diagnostic.Severity.ERROR, diagFile, e.getLineNumber(), e.getColumnNumber(), diagnosticMessage(e)));
                             }
                             @Override public void fatalError(org.xml.sax.SAXParseException e) {
-                                diags.add(new Diagnostic(Diagnostic.Severity.ERROR, filename, e.getLineNumber(), e.getColumnNumber(), humanizeXmlError(e)));
+                                diags.add(new Diagnostic(Diagnostic.Severity.ERROR, diagFile, e.getLineNumber(), e.getColumnNumber(), diagnosticMessage(e)));
                             }
                         });
                         builder.parse(new org.xml.sax.InputSource(new StringReader(text)));
                     } catch (Exception e) {
                         if (e instanceof org.xml.sax.SAXParseException) {
                             org.xml.sax.SAXParseException sax = (org.xml.sax.SAXParseException) e;
-                            diags.add(new Diagnostic(Diagnostic.Severity.ERROR, filename, sax.getLineNumber(), sax.getColumnNumber(), humanizeXmlError(sax)));
+                            diags.add(new Diagnostic(Diagnostic.Severity.ERROR, diagFile, sax.getLineNumber(), sax.getColumnNumber(), diagnosticMessage(sax)));
                         } else if (diags.isEmpty()) {
-                            diags.add(new Diagnostic(Diagnostic.Severity.ERROR, filename, 1, 0, e.getMessage()));
+                            diags.add(new Diagnostic(Diagnostic.Severity.ERROR, diagFile, 1, 0, String.valueOf(e.getMessage())));
                         }
                     }
                     runOnUiThread(() -> {
                         if (myGen != diagGeneration.get()) return;
-                        updateIssueStatus(diags);
-                        if (diagnosticsBehavior != null && !diags.isEmpty()) {
-                            showDiagnostics(diags);
-                        } else if (diagnosticsBehavior != null && diags.isEmpty()) {
-                            diagnosticsBehavior.setState(BottomSheetBehavior.STATE_HIDDEN);
-                        }
+                        liveDiagnostics.clear();
+                        liveDiagnostics.addAll(diags);
+                        refreshDiagnostics(false);
                     });
                 }).start();
             }
         };
         diagHandler.postDelayed(diagRunnable, 800);
+    }
+
+    private String diagnosticMessage(org.xml.sax.SAXParseException e) {
+        return humanizeXmlError(e).replaceFirst("^Line \\d+: ", "");
+    }
+
+    private List<Diagnostic> mergedDiagnostics() {
+        java.util.LinkedHashMap<String, Diagnostic> unique = new java.util.LinkedHashMap<>();
+        for (List<Diagnostic> source : java.util.Arrays.asList(liveDiagnostics, buildDiagnostics)) {
+            for (Diagnostic diagnostic : source) {
+                unique.putIfAbsent(diagnostic.severity + "|" + diagnostic.fileName + "|" + diagnostic.line + "|"
+                        + diagnostic.column + "|" + diagnostic.message, diagnostic);
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    private void refreshDiagnostics(boolean expand) {
+        List<Diagnostic> merged = mergedDiagnostics();
+        updateIssueStatus(merged);
+        if (diagnosticsAdapter != null) diagnosticsAdapter.update(merged);
+        if (binding != null && binding.tvDiagnosticTitle != null) {
+            binding.tvDiagnosticTitle.setText(merged.isEmpty() ? "No issues" : "Issues (" + merged.size() + ")");
+        }
+        if (diagnosticsBehavior == null) return;
+        if (merged.isEmpty()) diagnosticsBehavior.setState(BottomSheetBehavior.STATE_HIDDEN);
+        else if (expand) diagnosticsBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+    }
+
+    private boolean diagnosticFileMatches(@Nullable String target, @Nullable String title, @Nullable String path) {
+        if (target == null || target.isEmpty()) return true;
+        String targetName = new File(target).getName();
+        if (title != null && (title.equals(target) || title.equals(targetName))) return true;
+        if (path != null) {
+            if (path.equals(target) || path.endsWith(File.separator + target)) return true;
+            return new File(path).getName().equals(targetName);
+        }
+        return false;
+    }
+
+    private void jumpToDiagnosticLocation(Diagnostic diagnostic) {
+        Content text = editor.getText();
+        int line = Math.max(0, Math.min(diagnostic.line - 1, text.getLineCount() - 1));
+        int column = diagnostic.column > 0 ? Math.min(diagnostic.column - 1, text.getLineString(line).length()) : 0;
+        editor.jumpToLine(line);
+        editor.setSelection(line, column);
+        editor.requestFocus();
+    }
+
+    private void navigateToDiagnostic(Diagnostic diagnostic) {
+        if (diagnosticsBehavior != null) diagnosticsBehavior.setState(BottomSheetBehavior.STATE_HIDDEN);
+        if (diagnostic == null || diagnostic.line <= 0) return;
+        String target = diagnostic.fileName;
+        if (diagnosticFileMatches(target, filename, activeTab == null ? null : activeTab.path)) {
+            pendingDiagnosticJump = null;
+            jumpToDiagnosticLocation(diagnostic);
+            return;
+        }
+        EditorTab openTab = null;
+        for (EditorTab tab : openTabs) {
+            if (diagnosticFileMatches(target, tab.title, tab.path)) {
+                openTab = tab;
+                break;
+            }
+        }
+        if (openTab != null) {
+            pendingDiagnosticJump = diagnostic;
+            requestTabSwitch(openTab);
+            return;
+        }
+        ExplorerNode node = explorerAdapter == null ? null : explorerAdapter.findNode(target);
+        if (node != null) {
+            pendingDiagnosticJump = diagnostic;
+            onExplorerFileClick(node);
+            return;
+        }
+        SketchwareUtil.toast("File not found in project: " + target);
     }
 
     private String humanizeXmlError(org.xml.sax.SAXParseException e) {
@@ -1308,14 +1441,14 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
             @Override public void beforeReplace(Content content) { }
             @Override public void afterDelete(Content content, int startLine, int startColumn, int endLine, int endColumn, CharSequence deletedContent) {
                 if (isLoadingTab) return;
-                runOnUiThread(() -> updateMenuState());
+                scheduleEditorStateRefresh();
                 triggerRealtimeDiagnostics();
             }
 
             @Override
             public void afterInsert(Content content, int startLine, int startColumn, int endLine, int endColumn, CharSequence insertedContent) {
                 if (isLoadingTab) return;
-                runOnUiThread(() -> updateMenuState());
+                scheduleEditorStateRefresh();
                 triggerRealtimeDiagnostics();
 
                 if (insertedContent != null && insertedContent.toString().equals(">")) {
@@ -1348,23 +1481,41 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                 binding.btnCloseDiagnostics.setOnClickListener(v -> diagnosticsBehavior.setState(BottomSheetBehavior.STATE_HIDDEN));
             }
         }
-        updateIssueStatus(java.util.Collections.emptyList());
+        if (binding.rvDiagnostics != null) {
+            diagnosticsAdapter = new DiagnosticsAdapter(new ArrayList<>(), this::navigateToDiagnostic);
+            binding.rvDiagnostics.setAdapter(diagnosticsAdapter);
+        }
+        refreshDiagnostics(false);
     }
 
     private void updateIssueStatus(List<Diagnostic> diagnostics) {
         if (binding == null || binding.tvIssueStatus == null || binding.imgIssueStatus == null) return;
-        int count = diagnostics == null ? 0 : diagnostics.size();
+        int errors = 0;
+        int others = 0;
+        if (diagnostics != null) {
+            for (Diagnostic diagnostic : diagnostics) {
+                if (diagnostic.severity == Diagnostic.Severity.ERROR) errors++;
+                else others++;
+            }
+        }
+        int count = errors + others;
         if (count == 0) {
             binding.tvIssueStatus.setText("No issues");
             binding.tvIssueStatus.setTextColor(0xFF2EA866);
             binding.imgIssueStatus.setImageResource(R.drawable.ic_mtrl_check);
             binding.imgIssueStatus.setColorFilter(0xFF2EA866);
         } else {
-            binding.tvIssueStatus.setText(count == 1 ? "1 issue" : count + " issues");
-            int errorColor = ThemeUtils.getColor(this, R.attr.colorError);
-            binding.tvIssueStatus.setTextColor(errorColor);
+            StringBuilder label = new StringBuilder();
+            if (errors > 0) label.append(errors).append(errors == 1 ? " error" : " errors");
+            if (others > 0) {
+                if (label.length() > 0) label.append(", ");
+                label.append(others).append(others == 1 ? " warning" : " warnings");
+            }
+            binding.tvIssueStatus.setText(label);
+            int statusColor = ThemeUtils.getColor(this, errors > 0 ? R.attr.colorError : R.attr.colorPrimary);
+            binding.tvIssueStatus.setTextColor(statusColor);
             binding.imgIssueStatus.setImageResource(R.drawable.ic_mtrl_warning);
-            binding.imgIssueStatus.setColorFilter(errorColor);
+            binding.imgIssueStatus.setColorFilter(statusColor);
         }
         if (binding.issueStatusCard != null) {
             binding.issueStatusCard.setCardBackgroundColor(ThemeUtils.getColor(this, R.attr.colorSurfaceContainerLow));
@@ -1373,19 +1524,9 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
     }
 
     public void showDiagnostics(List<Diagnostic> diagnostics) {
-        updateIssueStatus(diagnostics);
-        if (diagnosticsBehavior == null) return;
-        if (binding.rvDiagnostics != null) {
-            DiagnosticsAdapter adapter = new DiagnosticsAdapter(diagnostics, diagnostic -> {
-                if (diagnostic.fileName.equals(filename)) {
-                    editor.jumpToLine(diagnostic.line - 1);
-                }
-                diagnosticsBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
-            });
-            binding.rvDiagnostics.setAdapter(adapter);
-        }
-        if (binding.tvDiagnosticTitle != null) binding.tvDiagnosticTitle.setText("Issues (" + diagnostics.size() + ")");
-        diagnosticsBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+        liveDiagnostics.clear();
+        if (diagnostics != null) liveDiagnostics.addAll(diagnostics);
+        refreshDiagnostics(true);
     }
 
     private void setupSearchPanel() {
@@ -1403,13 +1544,65 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { updateFindResults(); }
         };
         binding.findEdit.addTextChangedListener(searchWatcher);
+        binding.findEdit.setOnEditorActionListener((view, actionId, event) -> {
+            boolean enterPressed = event != null && event.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER
+                    && event.getAction() == android.view.KeyEvent.ACTION_DOWN;
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || enterPressed) {
+                moveToSearchMatch(true);
+                return true;
+            }
+            return false;
+        });
         binding.searchOptionsGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> updateFindResults());
+    }
+
+    private void openSearchPanel() {
+        if (binding.searchCard == null) return;
+        binding.searchCard.setVisibility(View.VISIBLE);
+        String selected = getSelectedSingleLineText();
+        if (!selected.isEmpty()) {
+            binding.findEdit.setText(selected);
+            binding.findEdit.setSelection(selected.length());
+        }
+        updateFindResults();
+        binding.findEdit.requestFocus();
+        binding.findEdit.selectAll();
+        showKeyboard(binding.findEdit);
+    }
+
+    private String getSelectedSingleLineText() {
+        try {
+            io.github.rosemoe.sora.text.Cursor cursor = editor.getCursor();
+            if (!cursor.isSelected()) return "";
+            CharSequence selected = editor.getText().subSequence(cursor.getLeft(), cursor.getRight());
+            if (selected.length() > 120) return "";
+            for (int i = 0; i < selected.length(); i++) if (selected.charAt(i) == '\n') return "";
+            return selected.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void showKeyboard(View view) {
+        view.post(() -> {
+            android.view.inputmethod.InputMethodManager manager =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (manager != null) manager.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        });
+    }
+
+    private void hideKeyboard(View view) {
+        android.view.inputmethod.InputMethodManager manager =
+                (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (manager != null && view != null) manager.hideSoftInputFromWindow(view.getWindowToken(), 0);
     }
 
     private void hideSearchPanel() {
         try { editor.getSearcher().stopSearch(); } catch (Exception ignored) { }
+        hideKeyboard(binding.findEdit);
         binding.searchCard.setVisibility(View.GONE);
         if (binding.findEdit != null) binding.findEdit.setText("");
+        editor.requestFocus();
     }
 
     private String getSearchExpression() {
@@ -1662,6 +1855,7 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
 
     @Override
     public void onDestroy() {
+        stateHandler.removeCallbacks(stateRefreshRunnable);
         if (selectionSubscription != null) {
             try { selectionSubscription.unsubscribe(); } catch (Throwable ignored) { }
             selectionSubscription = null;
@@ -1678,46 +1872,28 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
         prefs.edit().putInt("act_ts", (int) (editor.getTextSizePx() / scaledDensity)).apply();
     }
 
-    private MenuItem addOverflowItem(Menu menu, int id, String title, int iconResource) {
-        MenuItem item = menu.add(Menu.NONE, id, Menu.NONE, title);
-        if (iconResource != 0) item.setIcon(AppCompatResources.getDrawable(this, iconResource));
-        item.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        return item;
+    private Drawable mutableIcon(int resource) {
+        Drawable icon = AppCompatResources.getDrawable(this, resource);
+        return icon == null ? null : icon.mutate();
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         MenuItem undoItem = menu.add(Menu.NONE, 0, Menu.NONE, "Undo");
-        undoItem.setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_undo));
+        undoItem.setIcon(mutableIcon(R.drawable.ic_mtrl_undo));
         undoItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
         MenuItem redoItem = menu.add(Menu.NONE, 1, Menu.NONE, "Redo");
-        redoItem.setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_redo));
+        redoItem.setIcon(mutableIcon(R.drawable.ic_mtrl_redo));
         redoItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
         MenuItem saveItem = menu.add(Menu.NONE, 2, Menu.NONE, "Save");
-        saveItem.setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_save));
+        saveItem.setIcon(mutableIcon(R.drawable.ic_mtrl_save));
         saveItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
-        addOverflowItem(menu, 12, "Project Explorer", R.drawable.ic_mtrl_folder_open);
-        addOverflowItem(menu, 4, "Find & Replace", R.drawable.ic_mtrl_find_replace);
-        addOverflowItem(menu, 5, "Format Code", R.drawable.ic_mtrl_formattext);
-        addOverflowItem(menu, 6, "Layout Preview", R.drawable.ic_mtrl_preview);
-        addOverflowItem(menu, 13, "Quick Layout", R.drawable.ic_mtrl_grid);
-        addOverflowItem(menu, 7, "Select Language", R.drawable.ic_mtrl_code);
-        addOverflowItem(menu, 14, "Editor Settings", R.drawable.ic_mtrl_settings);
-        addOverflowItem(menu, 15, "About", R.drawable.ic_mtrl_info);
-
-        MenuItem wrapItem = addOverflowItem(menu, 9, "Word wrap", R.drawable.ic_mtrl_formattext);
-        wrapItem.setCheckable(true).setChecked(prefs.getBoolean("act_ww", false));
-        MenuItem acItem = addOverflowItem(menu, 10, "Auto complete", R.drawable.ic_mtrl_code);
-        acItem.setCheckable(true).setChecked(prefs.getBoolean("act_ac", true));
-        MenuItem acspItem = addOverflowItem(menu, 11, "Auto complete symbol pair", R.drawable.ic_mtrl_code);
-        acspItem.setCheckable(true).setChecked(prefs.getBoolean("act_acsp", true));
-        
-        if (menu instanceof androidx.appcompat.view.menu.MenuBuilder) {
-            ((androidx.appcompat.view.menu.MenuBuilder) menu).setOptionalIconsVisible(true);
-        }
+        MenuItem moreItem = menu.add(Menu.NONE, 16, Menu.NONE, "More options");
+        moreItem.setIcon(mutableIcon(R.drawable.ic_mtrl_more_vertical));
+        moreItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         return true;
     }
 
@@ -1727,76 +1903,92 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
     public boolean onPrepareOptionsMenu(Menu menu) {
         optionsMenu = menu;
         updateMenuState();
-        boolean canPreviewLayout = activeTab != null && activeTab.databaseLayout
-                && filename != null && filename.toLowerCase(java.util.Locale.ROOT).endsWith(".xml");
-        MenuItem previewItem = menu.findItem(6);
-        if (previewItem != null) previewItem.setVisible(canPreviewLayout);
-        MenuItem quickLayoutItem = menu.findItem(13);
-        if (quickLayoutItem != null) quickLayoutItem.setVisible(canPreviewLayout);
         return super.onPrepareOptionsMenu(menu);
     }
 
+    private final Handler stateHandler = new Handler(Looper.getMainLooper());
+    private final Runnable stateRefreshRunnable = this::refreshEditorState;
+    private boolean stateRefreshPosted;
+
+    private void scheduleEditorStateRefresh() {
+        if (stateRefreshPosted) return;
+        stateRefreshPosted = true;
+        stateHandler.postDelayed(stateRefreshRunnable, 80);
+    }
+
     private void updateMenuState() {
-        if (editor != null && activeTab != null) {
+        stateHandler.removeCallbacks(stateRefreshRunnable);
+        refreshEditorState();
+    }
+
+    private void refreshEditorState() {
+        stateRefreshPosted = false;
+        if (editor == null) return;
+        if (activeTab != null && !isLoadingTab) {
             activeTab.workingContent = editor.getText().toString();
             updateTabTitle(activeTab);
         }
-        if (optionsMenu == null || editor == null) return;
-        MenuItem undoItem = optionsMenu.findItem(0);
-        if (undoItem != null) {
-            try { undoItem.setEnabled(editor.canUndo()); } catch (Exception ignored) { }
-        }
-        MenuItem redoItem = optionsMenu.findItem(1);
-        if (redoItem != null) {
-            try { redoItem.setEnabled(editor.canRedo()); } catch (Exception ignored) { }
-        }
-        MenuItem saveItem = optionsMenu.findItem(2);
-        if (saveItem != null) saveItem.setEnabled(isContentModified());
-        boolean canPreviewLayout = activeTab != null && activeTab.databaseLayout
+        if (optionsMenu == null) return;
+        boolean canUndo = false;
+        boolean canRedo = false;
+        try { canUndo = editor.canUndo(); } catch (Exception ignored) { }
+        try { canRedo = editor.canRedo(); } catch (Exception ignored) { }
+        setMenuItemEnabled(optionsMenu.findItem(0), canUndo);
+        setMenuItemEnabled(optionsMenu.findItem(1), canRedo);
+        setMenuItemEnabled(optionsMenu.findItem(2), isContentModified());
+    }
+
+    private void setMenuItemEnabled(@Nullable MenuItem item, boolean enabled) {
+        if (item == null) return;
+        item.setEnabled(enabled);
+        Drawable icon = item.getIcon();
+        if (icon != null) icon.setAlpha(enabled ? 255 : 97);
+    }
+
+    private void performUndo() {
+        try { if (editor.canUndo()) editor.undo(); } catch (Exception ignored) { }
+        updateMenuState();
+        scheduleEditorStateRefresh();
+    }
+
+    private void performRedo() {
+        try { if (editor.canRedo()) editor.redo(); } catch (Exception ignored) { }
+        updateMenuState();
+        scheduleEditorStateRefresh();
+    }
+
+    private boolean canFormatLayoutTools() {
+        return activeTab != null && activeTab.databaseLayout
                 && filename != null && filename.toLowerCase(java.util.Locale.ROOT).endsWith(".xml");
-        MenuItem previewItem = optionsMenu.findItem(6);
-        if (previewItem != null) previewItem.setVisible(canPreviewLayout);
-        MenuItem quickLayoutItem = optionsMenu.findItem(13);
-        if (quickLayoutItem != null) quickLayoutItem.setVisible(canPreviewLayout);
     }
 
     @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
         switch (item.getItemId()) {
-            case 0 -> { try { editor.undo(); } catch (Exception ignored) { } return true; }
-            case 1 -> { try { editor.redo(); } catch (Exception ignored) { } return true; }
+            case 0 -> { performUndo(); return true; }
+            case 1 -> { performRedo(); return true; }
             case 2 -> {
                 if (isContentModified()) saveCurrentTab();
                 else SketchwareUtil.toast("No changes to save");
                 return true;
             }
+            case 16 -> { showMoreOptionsSheet(); return true; }
+            default -> { return dispatchOption(item.getItemId()) || super.onOptionsItemSelected(item); }
+        }
+    }
+
+    private boolean dispatchOption(int optionId) {
+        switch (optionId) {
             case 12 -> {
                 openProjectExplorer();
                 return true;
             }
             case 4 -> {
-                if (binding.searchCard != null) {
-                    binding.searchCard.setVisibility(View.VISIBLE);
-                    binding.searchCard.bringToFront();
-                    updateFindResults();
-                    if (binding.findEdit != null) binding.findEdit.requestFocus();
-                }
+                openSearchPanel();
                 return true;
             }
             case 5 -> {
-                if (filename != null && filename.toLowerCase(java.util.Locale.ROOT).endsWith(".java")) {
-                    StringBuilder formatted = new StringBuilder();
-                    for (String line : editor.getText().toString().split("\n")) {
-                        String trimmed = line.trim();
-                        if (!trimmed.isEmpty()) formatted.append(trimmed).append("\n");
-                    }
-                    try { editor.setText(Lx.j(formatted.toString(), true)); SketchwareUtil.toast("Code formatted"); }
-                    catch (Exception e) { SketchwareUtil.toastError("Could not format code. Check the syntax first."); }
-                } else if (filename != null && filename.toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) {
-                    String format = SrcCodeEditor.prettifyXml(editor.getText().toString(), 4, getIntent());
-                    if (format != null) { editor.setText(format); SketchwareUtil.toast("XML formatted"); }
-                    else SketchwareUtil.toastError("Could not format XML. Check the syntax first.");
-                } else SketchwareUtil.toast("Formatting is available for Java and XML files.");
+                formatCurrentFile();
                 return true;
             }
             case 6 -> {
@@ -1809,24 +2001,6 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
             }
             case 7 -> { showLanguageSelector(); return true; }
             case 13 -> { if (activeTab != null && activeTab.databaseLayout) showGenerateLayoutWithAiDialog(); return true; }
-            case 9 -> {
-                item.setChecked(!item.isChecked());
-                editor.setWordwrap(item.isChecked());
-                prefs.edit().putBoolean("act_ww", item.isChecked()).apply();
-                return true;
-            }
-            case 10 -> {
-                item.setChecked(!item.isChecked());
-                editor.getComponent(EditorAutoCompletion.class).setEnabled(item.isChecked());
-                prefs.edit().putBoolean("act_ac", item.isChecked()).apply();
-                return true;
-            }
-            case 11 -> {
-                item.setChecked(!item.isChecked());
-                editor.getProps().symbolPairAutoCompletion = item.isChecked();
-                prefs.edit().putBoolean("act_acsp", item.isChecked()).apply();
-                return true;
-            }
             case 14 -> { showEditorSettingsDialog(); return true; }
             case 15 -> {
                 new MaterialAlertDialogBuilder(this)
@@ -1836,8 +2010,107 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                         .show();
                 return true;
             }
-            default -> { return super.onOptionsItemSelected(item); }
+            default -> { return false; }
         }
+    }
+
+    private void formatCurrentFile() {
+        if (filename == null) {
+            SketchwareUtil.toast("Formatting is available for Java and XML files.");
+            return;
+        }
+        String lowerName = filename.toLowerCase(java.util.Locale.ROOT);
+        String original = editor.getText().toString();
+        String formatted;
+        String successMessage;
+        if (lowerName.endsWith(".java")) {
+            try {
+                formatted = Lx.j(original, true);
+            } catch (Exception e) {
+                SketchwareUtil.toastError("Could not format code. Check the syntax first.");
+                return;
+            }
+            successMessage = "Code formatted";
+        } else if (lowerName.endsWith(".xml")) {
+            formatted = SrcCodeEditor.prettifyXml(original, 4, getIntent());
+            if (formatted == null) {
+                SketchwareUtil.toastError("Could not format XML. Check the syntax first.");
+                return;
+            }
+            successMessage = "XML formatted";
+        } else {
+            SketchwareUtil.toast("Formatting is available for Java and XML files.");
+            return;
+        }
+        if (formatted.equals(original)) {
+            SketchwareUtil.toast("Already formatted");
+            return;
+        }
+        replaceEditorContentKeepingHistory(formatted);
+        SketchwareUtil.toast(successMessage);
+    }
+
+    private void replaceEditorContentKeepingHistory(String newContent) {
+        Content text = editor.getText();
+        int cursorLine = editor.getCursor().getLeftLine();
+        int cursorColumn = editor.getCursor().getLeftColumn();
+        isLoadingTab = true;
+        try {
+            text.beginBatchEdit();
+            try {
+                text.replace(0, text.length(), newContent);
+            } finally {
+                text.endBatchEdit();
+            }
+        } finally {
+            isLoadingTab = false;
+        }
+        int line = Math.max(0, Math.min(cursorLine, text.getLineCount() - 1));
+        int column = Math.max(0, Math.min(cursorColumn, text.getLineString(line).length()));
+        editor.setSelection(line, column);
+        updateMenuState();
+        triggerRealtimeDiagnostics();
+        updateFindResults();
+    }
+
+    private void showMoreOptionsSheet() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        ViewCodeEditorOptionsBinding sheet = ViewCodeEditorOptionsBinding.inflate(getLayoutInflater());
+        int layoutToolsVisibility = canFormatLayoutTools() ? View.VISIBLE : View.GONE;
+        sheet.optPreview.setVisibility(layoutToolsVisibility);
+        sheet.optQuickLayout.setVisibility(layoutToolsVisibility);
+        bindOptionTile(dialog, sheet.optExplorer, 12);
+        bindOptionTile(dialog, sheet.optFind, 4);
+        bindOptionTile(dialog, sheet.optFormat, 5);
+        bindOptionTile(dialog, sheet.optPreview, 6);
+        bindOptionTile(dialog, sheet.optQuickLayout, 13);
+        bindOptionTile(dialog, sheet.optLanguage, 7);
+        bindOptionTile(dialog, sheet.optSettings, 14);
+        bindOptionTile(dialog, sheet.optAbout, 15);
+        sheet.switchWordWrap.setChecked(prefs.getBoolean("act_ww", false));
+        sheet.switchWordWrap.setOnCheckedChangeListener((button, checked) -> {
+            editor.setWordwrap(checked);
+            prefs.edit().putBoolean("act_ww", checked).apply();
+        });
+        sheet.switchAutoComplete.setChecked(prefs.getBoolean("act_ac", true));
+        sheet.switchAutoComplete.setOnCheckedChangeListener((button, checked) -> {
+            editor.getComponent(EditorAutoCompletion.class).setEnabled(checked);
+            prefs.edit().putBoolean("act_ac", checked).apply();
+        });
+        sheet.switchSymbolPair.setChecked(prefs.getBoolean("act_acsp", true));
+        sheet.switchSymbolPair.setOnCheckedChangeListener((button, checked) -> {
+            editor.getProps().symbolPairAutoCompletion = checked;
+            prefs.edit().putBoolean("act_acsp", checked).apply();
+        });
+        dialog.setContentView(sheet.getRoot());
+        dialog.show();
+    }
+
+    private void bindOptionTile(BottomSheetDialog dialog, View tile, int optionId) {
+        tile.setOnClickListener(v -> {
+            dialog.dismiss();
+            dispatchOption(optionId);
+        });
     }
 
     private void showEditorSettingsDialog() {
@@ -1980,6 +2253,7 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                     if (wasActive) {
                         isLoadingTab = true;
                         editor.setText(generatedXml);
+                        registerEditorContentListener();
                         isLoadingTab = false;
                         beforeContent = generatedXml;
                         content = generatedXml;
@@ -1995,6 +2269,7 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
                 } else if (wasActive && previousXml != null) {
                     isLoadingTab = true;
                     editor.setText(previousXml);
+                    registerEditorContentListener();
                     isLoadingTab = false;
                 }
                 h();
@@ -2178,22 +2453,26 @@ public class ViewCodeEditorActivity extends BaseAppCompatActivity {
         } catch (Exception e) {
             String friendlyMsg;
             int line = 1;
+            int column = 0;
             if (e instanceof org.xml.sax.SAXParseException) {
                 org.xml.sax.SAXParseException sax = (org.xml.sax.SAXParseException) e;
                 line = sax.getLineNumber();
+                column = sax.getColumnNumber();
                 friendlyMsg = humanizeXmlError(sax);
             } else {
                 friendlyMsg = e.getMessage();
             }
             SketchwareUtil.toastError("XML Syntax Error: " + friendlyMsg);
             List<Diagnostic> errors = new ArrayList<>();
-            errors.add(new Diagnostic(Diagnostic.Severity.ERROR, targetFilename, line, 0, friendlyMsg));
+            errors.add(new Diagnostic(Diagnostic.Severity.ERROR, targetFilename, line, column, String.valueOf(friendlyMsg).replaceFirst("^Line \\d+: ", "")));
             showDiagnostics(errors);
             return false;
         }
     }
 
     private boolean isContentModified() {
-        return editor != null && !Objects.equals(beforeContent, editor.getText().toString());
+        if (editor == null) return false;
+        if (activeTab != null) return isTabModified(activeTab);
+        return !Objects.equals(beforeContent, editor.getText().toString());
     }
 }

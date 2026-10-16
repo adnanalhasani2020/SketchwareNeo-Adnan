@@ -49,6 +49,7 @@ import mod.hey.studios.util.Helper;
 import mod.pranav.viewbinding.ViewBindingBuilder;
 import pro.sketchware.R;
 import pro.sketchware.utility.ThemeUtils;
+import pro.sketchware.utility.XmlUtil;
 
 public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickListener {
     private final boolean b = false;
@@ -406,7 +407,7 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
             attributes.put(attrName, newValue);
         }
         return attributes.entrySet().stream()
-                .map(entry -> entry.getKey() + "=\"" + entry.getValue() + "\"")
+                .map(entry -> entry.getKey() + "=\"" + XmlUtil.escapeAttributeValue(entry.getValue()) + "\"")
                 .collect(Collectors.joining("\n"));
     }
 

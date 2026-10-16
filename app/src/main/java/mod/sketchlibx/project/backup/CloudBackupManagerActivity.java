@@ -42,6 +42,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.Scope;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
@@ -727,6 +728,19 @@ public class CloudBackupManagerActivity extends BaseAppCompatActivity {
             if (onAccept != null) onAccept.run();
             bottomSheet.dismiss();
         });
+        
+        bottomSheet.setContentView(container);
+        
+        bottomSheet.setOnShowListener(dialog -> {
+        View sheet = bottomSheet.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+
+        if (sheet != null) {
+            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(sheet);
+            behavior.setSkipCollapsed(true);
+            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+        });
+        
         bottomSheet.show();
     }
 

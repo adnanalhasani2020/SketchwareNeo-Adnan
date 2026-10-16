@@ -3114,13 +3114,14 @@ public class Lx {
         int indentLevel = 0;
         boolean processingChar = false;
         boolean processingString = false;
+        boolean processingTextBlock = false;
         boolean isNewLine = true;
 
         for (int i = 0; i < codeChars.length; i++) {
             char codeBit = codeChars[i];
 
             if (isNewLine && !processingSingleLineComment && !processingMultiLineComment
-                    && !processingChar && !processingString) {
+                    && !processingChar && !processingString && !processingTextBlock) {
                 if (!isXML) {
                     if (codeBit == ' ' || codeBit == '\t') {
                         continue;
@@ -3158,6 +3159,7 @@ public class Lx {
                     formattedCode.append(codeBit).append(codeChars[i + 1]);
                     i += 1;
                     processingMultiLineComment = false;
+                    isNewLine = false;
                     continue;
                 }
                 formattedCode.append(codeBit);
@@ -3173,6 +3175,13 @@ public class Lx {
             } else if (codeBit == '\\') {
                 formattedCode.append(codeBit);
                 processingEscape = true;
+            } else if (processingTextBlock) {
+                formattedCode.append(codeBit);
+                if (codeBit == '"' && i + 2 < codeChars.length && codeChars[i + 1] == '"' && codeChars[i + 2] == '"') {
+                    formattedCode.append("\"\"");
+                    i += 2;
+                    processingTextBlock = false;
+                }
             } else if (processingChar) {
                 if (codeBit == '\'') {
                     formattedCode.append(codeBit);
@@ -3248,6 +3257,12 @@ public class Lx {
                         formattedCode.append(codeBit);
                         isNewLine = true;
                     } else {
+                        if (codeBit == '"' && i + 2 < codeChars.length && codeChars[i + 1] == '"' && codeChars[i + 2] == '"') {
+                            formattedCode.append("\"\"\"");
+                            i += 2;
+                            processingTextBlock = true;
+                            continue;
+                        }
                         if (codeBit == '\'') {
                             processingChar = true;
                         }

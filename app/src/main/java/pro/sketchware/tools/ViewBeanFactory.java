@@ -15,6 +15,7 @@ import java.util.List;
 import mod.agus.jcoderz.beans.ViewBeans;
 import pro.sketchware.utility.AttributeConstants;
 import pro.sketchware.utility.PropertiesUtil;
+import pro.sketchware.utility.XmlUtil;
 
 public class ViewBeanFactory {
 
@@ -106,7 +107,7 @@ public class ViewBeanFactory {
                 injectProperty
                         .append(attrName)
                         .append("=\"")
-                        .append(attrValue)
+                        .append(XmlUtil.escapeAttributeValue(attrValue))
                         .append("\"")
                         .append("\n");
             }
@@ -249,7 +250,7 @@ public class ViewBeanFactory {
 
         StringBuilder injectProperty = new StringBuilder();
         injectAttributes.forEach((key, value) -> 
-            injectProperty.append(key).append("=\"").append(value).append("\"\n")
+            injectProperty.append(key).append("=\"").append(XmlUtil.escapeAttributeValue(value)).append("\"\n")
         );
         bean.inject = injectProperty.toString().trim();
     }

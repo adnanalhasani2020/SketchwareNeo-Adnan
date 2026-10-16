@@ -35,6 +35,7 @@ import mod.agus.jcoderz.beans.ViewBeans;
 import mod.jbk.util.LogUtil;
 import pro.sketchware.managers.inject.InjectRootLayoutManager;
 import pro.sketchware.utility.InjectAttributeHandler;
+import pro.sketchware.utility.XmlUtil;
 import pro.sketchware.xml.XmlBuilder;
 
 @SuppressLint("RtlHardcoded")
@@ -438,7 +439,7 @@ public class Ox {
         }
         
         if (!viewBean.inject.isEmpty()) {
-            widgetTag.addAttributeValue(viewBean.inject.replaceAll(" ", ""));
+            widgetTag.addAttributeValue(XmlUtil.normalizeInjectedAttributes(viewBean.inject));
         }
 
         if (viewBean.parentAttributes != null && !viewBean.parentAttributes.isEmpty()) {

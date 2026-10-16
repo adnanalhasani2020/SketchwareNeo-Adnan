@@ -10,13 +10,15 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import pro.sketchware.R;
 import pro.sketchware.utility.SketchwareUtil;
+import pro.sketchware.utility.ThemeUtils;
 
 public class DiagnosticsAdapter extends RecyclerView.Adapter<DiagnosticsAdapter.VH> {
-    private final List<Diagnostic> diagnostics;
+    private final List<Diagnostic> diagnostics = new ArrayList<>();
     private final OnDiagnosticClickListener listener;
 
     public interface OnDiagnosticClickListener {
@@ -24,8 +26,20 @@ public class DiagnosticsAdapter extends RecyclerView.Adapter<DiagnosticsAdapter.
     }
 
     public DiagnosticsAdapter(List<Diagnostic> diagnostics, OnDiagnosticClickListener listener) {
-        this.diagnostics = diagnostics;
+        if (diagnostics != null) this.diagnostics.addAll(diagnostics);
         this.listener = listener;
+    }
+
+    public void update(List<Diagnostic> items) {
+        diagnostics.clear();
+        if (items != null) diagnostics.addAll(items);
+        notifyDataSetChanged();
+    }
+
+    private static String formatLocation(Diagnostic d) {
+        if (d.fileName == null || d.fileName.isEmpty()) return d.line > 0 ? "Line " + d.line : "";
+        if (d.line <= 0) return d.fileName;
+        return d.column > 0 ? d.fileName + ":" + d.line + ":" + d.column : d.fileName + ":" + d.line;
     }
 
     @NonNull
@@ -56,13 +70,13 @@ public class DiagnosticsAdapter extends RecyclerView.Adapter<DiagnosticsAdapter.
         TextView message = new TextView(parent.getContext());
         message.setId(View.generateViewId());
         message.setTextSize(14f);
-        message.setTextColor(Color.parseColor("#E2E2E5"));
+        message.setTextColor(ThemeUtils.getColor(parent.getContext(), R.attr.colorOnSurface));
         textContainer.addView(message);
 
         TextView location = new TextView(parent.getContext());
         location.setId(View.generateViewId());
         location.setTextSize(12f);
-        location.setTextColor(Color.parseColor("#C1C7CE"));
+        location.setTextColor(ThemeUtils.getColor(parent.getContext(), R.attr.colorOnSurfaceVariant));
         textContainer.addView(location);
 
         return new VH(root, icon, message, location);
@@ -72,11 +86,12 @@ public class DiagnosticsAdapter extends RecyclerView.Adapter<DiagnosticsAdapter.
     public void onBindViewHolder(@NonNull VH holder, int position) {
         Diagnostic d = diagnostics.get(position);
         holder.message.setText(d.message);
-        holder.location.setText(d.fileName + ":" + d.line);
+        holder.location.setText(formatLocation(d));
+        holder.location.setVisibility(holder.location.getText().length() == 0 ? View.GONE : View.VISIBLE);
         
         if (d.severity == Diagnostic.Severity.ERROR) {
             holder.icon.setImageResource(R.drawable.ic_mtrl_cancel);
-            holder.icon.setColorFilter(Color.parseColor("#FF5252"));
+            holder.icon.setColorFilter(ThemeUtils.getColor(holder.itemView.getContext(), R.attr.colorError));
         } else if (d.severity == Diagnostic.Severity.WARNING) {
             holder.icon.setImageResource(R.drawable.ic_mtrl_warning);
             holder.icon.setColorFilter(Color.parseColor("#FFC107"));
@@ -85,7 +100,9 @@ public class DiagnosticsAdapter extends RecyclerView.Adapter<DiagnosticsAdapter.
             holder.icon.setColorFilter(Color.parseColor("#2196F3"));
         }
 
-        holder.itemView.setOnClickListener(v -> listener.onDiagnosticClick(d));
+        holder.itemView.setOnClickListener(v -> {
+            if (listener != null) listener.onDiagnosticClick(d);
+        });
     }
 
     @Override

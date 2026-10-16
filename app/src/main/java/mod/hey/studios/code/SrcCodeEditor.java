@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,14 +28,18 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.view.GravityCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.tabs.TabLayout;
@@ -53,6 +58,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -91,6 +98,8 @@ import mod.jbk.code.CodeEditorLanguages.LanguageSpec;
 import pro.sketchware.R;
 import pro.sketchware.activities.preview.LayoutPreviewActivity;
 import pro.sketchware.databinding.CodeEditorHsBinding;
+import pro.sketchware.databinding.CodeEditorHsOptionsBinding;
+import pro.sketchware.databinding.CodeEditorHsSearchPanelBinding;
 import pro.sketchware.utility.EditorUtils;
 import pro.sketchware.utility.FileUtil;
 import pro.sketchware.utility.SketchwareUtil;
@@ -125,10 +134,13 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
     private TabLayout editorTabs;
     private RecyclerView rvExplorer;
 
-    private MaterialCardView searchCard;
-    private LinearLayout searchPanel;
-    private ImageView prevBtn, nextBtn, replaceBtn, replaceAllBtn;
-    private EditText findEdit, replaceEdit;
+    private CodeEditorHsSearchPanelBinding searchBinding;
+    private Menu optionsMenu;
+    private ContentListener editorContentListener;
+    private boolean isProgrammaticEdit;
+    private final Handler stateHandler = new Handler(Looper.getMainLooper());
+    private final Runnable stateRefreshRunnable = this::refreshEditorState;
+    private boolean stateRefreshPosted;
 
     private final Handler diagHandler = new Handler(Looper.getMainLooper());
     private Runnable diagRunnable;
@@ -232,7 +244,15 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
             NodeList nodeList = (NodeList) xPath.evaluate("//text()[normalize-space()='']", document, XPathConstants.NODESET);
             for (int i = 0; i < nodeList.getLength(); ++i) {
                 Node node = nodeList.item(i);
-                node.getParentNode().removeChild(node);
+                Node parent = node.getParentNode();
+                boolean structuralWhitespace = false;
+                for (Node child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
+                    if (child.getNodeType() == Node.ELEMENT_NODE) {
+                        structuralWhitespace = true;
+                        break;
+                    }
+                }
+                if (structuralWhitespace) parent.removeChild(node);
             }
             Transformer transformer = TransformerFactory.newInstance().newTransformer();
             transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
@@ -253,30 +273,113 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                 }
             }
 
-            String[] lines = result.split("\n");
-            StringBuilder formatted = new StringBuilder();
-            for (String line : lines) {
-                String trimmed = line.trim();
-                if (trimmed.startsWith("<") && !trimmed.startsWith("<?") && !trimmed.startsWith("<!") && trimmed.contains(" ") && !trimmed.startsWith("</")) {
-                    int indentBase = line.indexOf('<');
-                    String baseIndent = " ".repeat(Math.max(0, indentBase));
-                    String attrIndent = baseIndent + "    ";
-                    boolean selfClosing = trimmed.endsWith("/>");
-                    int tagEnd = trimmed.indexOf(' ');
-                    if (tagEnd > 0) {
-                        String tagName = trimmed.substring(1, tagEnd);
-                        String attrPart = trimmed.substring(tagEnd + 1).replaceAll("/?>$", "").trim();
-                        String[] attrs = attrPart.split("\\s+(?=[^=]+\\=)");
-                        formatted.append(baseIndent).append("<").append(tagName).append("\n");
-                        for (String attr : attrs) { formatted.append(attrIndent).append(attr.trim()).append("\n"); }
-                        int lastNewline = formatted.lastIndexOf("\n");
-                        if (lastNewline != -1) formatted.delete(lastNewline, formatted.length());
-                        formatted.append(selfClosing ? " />" : ">").append("\n");
-                    } else { formatted.append(line).append("\n"); }
-                } else { formatted.append(line).append("\n"); }
-            }
-            return formatted.toString().trim();
+            return reflowStartTags(result).trim();
         } catch (Exception e) { return null; }
+    }
+
+    private static String reflowStartTags(String xml) {
+        String[] lines = xml.split("\n", -1);
+        StringBuilder formatted = new StringBuilder(xml.length() + 256);
+        boolean insideComment = false;
+        boolean insideCdata = false;
+        for (int index = 0; index < lines.length; index++) {
+            String line = lines[index];
+            boolean untouched = insideComment || insideCdata;
+            int position = 0;
+            while (position < line.length()) {
+                if (insideComment) {
+                    int end = line.indexOf("-->", position);
+                    if (end < 0) break;
+                    insideComment = false;
+                    position = end + 3;
+                } else if (insideCdata) {
+                    int end = line.indexOf("]]>", position);
+                    if (end < 0) break;
+                    insideCdata = false;
+                    position = end + 3;
+                } else {
+                    int comment = line.indexOf("<!--", position);
+                    int cdata = line.indexOf("<![CDATA[", position);
+                    if (comment < 0 && cdata < 0) break;
+                    untouched = true;
+                    if (cdata < 0 || (comment >= 0 && comment < cdata)) {
+                        insideComment = true;
+                        position = comment + 4;
+                    } else {
+                        insideCdata = true;
+                        position = cdata + 9;
+                    }
+                }
+            }
+            String reflowed = untouched ? null : reflowStartTag(line);
+            formatted.append(reflowed == null ? line : reflowed);
+            if (index < lines.length - 1) formatted.append('\n');
+        }
+        return formatted.toString();
+    }
+
+    private static String reflowStartTag(String line) {
+        String trimmed = line.trim();
+        if (!trimmed.startsWith("<") || trimmed.startsWith("</") || trimmed.startsWith("<?") || trimmed.startsWith("<!")) return null;
+        int nameEnd = -1;
+        for (int i = 1; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            if (c == '>') return null;
+            if (Character.isWhitespace(c)) {
+                nameEnd = i;
+                break;
+            }
+        }
+        if (nameEnd < 0) return null;
+        char quote = 0;
+        int tagEnd = -1;
+        for (int i = nameEnd; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            if (quote != 0) {
+                if (c == quote) quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '>') {
+                tagEnd = i;
+                break;
+            }
+        }
+        if (tagEnd != trimmed.length() - 1) return null;
+        boolean selfClosing = trimmed.charAt(tagEnd - 1) == '/';
+        List<String> attributes = splitAttributes(trimmed.substring(nameEnd + 1, selfClosing ? tagEnd - 1 : tagEnd));
+        if (attributes.isEmpty()) return null;
+        String baseIndent = " ".repeat(Math.max(0, line.indexOf('<')));
+        String attributeIndent = baseIndent + "    ";
+        StringBuilder reflowed = new StringBuilder();
+        reflowed.append(baseIndent).append(trimmed, 0, nameEnd);
+        for (String attribute : attributes) reflowed.append('\n').append(attributeIndent).append(attribute);
+        reflowed.append(selfClosing ? " />" : ">");
+        return reflowed.toString();
+    }
+
+    private static List<String> splitAttributes(String attributes) {
+        List<String> result = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        char quote = 0;
+        for (int i = 0; i < attributes.length(); i++) {
+            char c = attributes.charAt(i);
+            if (quote != 0) {
+                current.append(c);
+                if (c == quote) quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+                current.append(c);
+            } else if (Character.isWhitespace(c)) {
+                if (current.length() > 0) {
+                    result.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(c);
+            }
+        }
+        if (current.length() > 0) result.add(current.toString());
+        return result;
     }
 
     public static void showSwitchThemeDialog(Activity activity, CodeEditor codeEditor, DialogInterface.OnClickListener listener) {
@@ -372,25 +475,19 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
             }
         }
 
-        binding.editor.getText().addContentListener(new ContentListener() {
-            @Override public void beforeReplace(Content content) {}
-            @Override public void afterDelete(Content content, int startLine, int startColumn, int endLine, int endColumn, CharSequence deletedContent) {
-                runOnUiThread(() -> invalidateOptionsMenu());
-                triggerRealtimeDiagnostics();
-                notifyPluginsCodeChanged();
-            }
-            @Override public void afterInsert(Content content, int startLine, int startColumn, int endLine, int endColumn, CharSequence insertedContent) {
-                runOnUiThread(() -> invalidateOptionsMenu());
-                triggerRealtimeDiagnostics();
-                notifyPluginsCodeChanged();
-                
-                checkAndApplySnippets(startLine, startColumn, endLine, endColumn, insertedContent);
-            }
-        });
+        registerContentListener();
 
         View appBarLayout = findViewById(R.id.app_bar_layout);
         if(appBarLayout != null) UI.addSystemWindowInsetToPadding(appBarLayout, true, true, true, false);
-        UI.addSystemWindowInsetToMargin(binding.editor, true, false, true, true);
+        UI.addSystemWindowInsetToMargin(binding.editor, true, false, true, false);
+        getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        ViewCompat.setOnApplyWindowInsetsListener(binding.getRoot(), (view, windowInsets) -> {
+            int bottomInset = Math.max(
+                    windowInsets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom,
+                    windowInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom);
+            view.setPadding(view.getPaddingLeft(), view.getPaddingTop(), view.getPaddingRight(), bottomInset);
+            return windowInsets;
+        });
         
         View navView = findViewById(R.id.nav_view_explorer);
         if(navView != null) UI.addSystemWindowInsetToPadding(navView, true, true, true, true);
@@ -756,11 +853,12 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
             File layoutFolder = new File(FileUtil.getExternalStorageDir() + "/.sketchware/data/" + scId + "/files/resource/layout/");
             if (layoutFolder.exists()) {
                 FileTreeAdapter adapter = new FileTreeAdapter(layoutFolder, file -> {
-                    save(); // Save before opening next to prevent data loss
+                    if (isContentModified()) save();
                     
                     currentTitle = file.getName();
                     beforeContent = FileUtil.readFile(file.getAbsolutePath());
                     binding.editor.setText(beforeContent);
+                    registerContentListener();
                     
                     getIntent().putExtra("content", file.getAbsolutePath());
                     getIntent().putExtra("title", currentTitle);
@@ -769,7 +867,7 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                     if (getSupportActionBar() != null) getSupportActionBar().setTitle(currentTitle);
                     setupTabs();
                     if(drawerLayout != null) drawerLayout.closeDrawer(GravityCompat.START);
-                    invalidateOptionsMenu();
+                    updateMenuState();
                 });
                 rvExplorer.setAdapter(adapter);
             }
@@ -936,96 +1034,263 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
         diagnosticsBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);
     }
 
-    private void setupSearchPanel() {
-        searchCard = new MaterialCardView(this);
-        searchCard.setCardElevation(16f);
-        searchCard.setRadius(24f);
-        searchCard.setCardBackgroundColor(ThemeUtils.getColor(this, R.attr.colorSurfaceVariant));
-        searchCard.setVisibility(View.GONE);
+    private static final class SearchMatch {
+        final int start;
+        final int end;
+        final String replacement;
 
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        int margin = (int) (16 * getResources().getDisplayMetrics().density);
-        cardParams.setMargins(margin, margin, margin, margin);
-        searchCard.setLayoutParams(cardParams);
+        SearchMatch(int start, int end, String replacement) {
+            this.start = start;
+            this.end = end;
+            this.replacement = replacement;
+        }
+    }
 
-        searchPanel = new LinearLayout(this);
-        searchPanel.setOrientation(LinearLayout.VERTICAL);
-        searchPanel.setPadding(margin/2, margin/2, margin/2, margin/2);
-        
-        int iconColor = ThemeUtils.getColor(this, R.attr.colorOnSurfaceVariant);
-        
-        LinearLayout findRow = new LinearLayout(this);
-        findRow.setOrientation(LinearLayout.HORIZONTAL);
-        findRow.setPadding(16, 16, 16, 8);
-        
-        findEdit = new EditText(this);
-        findEdit.setHint("Find...");
-        findEdit.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        
-        prevBtn = new ImageView(this);
-        prevBtn.setImageResource(R.drawable.ic_mtrl_arrow_up);
-        prevBtn.setColorFilter(iconColor);
-        prevBtn.setPadding(16, 16, 16, 16);
-        prevBtn.setOnClickListener(v -> { if (findEdit.getText().length() > 0) try { binding.editor.getSearcher().gotoPrevious(); } catch (Exception ignored) {} });
-        
-        nextBtn = new ImageView(this);
-        nextBtn.setImageResource(R.drawable.ic_mtrl_arrow_down);
-        nextBtn.setColorFilter(iconColor);
-        nextBtn.setPadding(16, 16, 16, 16);
-        nextBtn.setOnClickListener(v -> { if (findEdit.getText().length() > 0) try { binding.editor.getSearcher().gotoNext(); } catch (Exception ignored) {} });
-        
-        ImageView closeBtn = new ImageView(this);
-        closeBtn.setImageResource(R.drawable.ic_mtrl_close);
-        closeBtn.setColorFilter(iconColor);
-        closeBtn.setPadding(16, 16, 16, 16);
-        closeBtn.setOnClickListener(v -> {
-            try { binding.editor.getSearcher().stopSearch(); } catch (Exception ignored) {}
-            searchCard.setVisibility(View.GONE);
-            findEdit.setText("");
-        });
-        
-        findRow.addView(findEdit); findRow.addView(prevBtn); findRow.addView(nextBtn); findRow.addView(closeBtn);
-        
-        LinearLayout replaceRow = new LinearLayout(this);
-        replaceRow.setOrientation(LinearLayout.HORIZONTAL);
-        replaceRow.setPadding(16, 8, 16, 16);
-        
-        replaceEdit = new EditText(this);
-        replaceEdit.setHint("Replace...");
-        replaceEdit.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        
-        replaceBtn = new ImageView(this);
-        replaceBtn.setImageResource(R.drawable.ic_mtrl_find_replace);
-        replaceBtn.setColorFilter(iconColor);
-        replaceBtn.setPadding(16, 16, 16, 16);
-        replaceBtn.setOnClickListener(v -> { if (findEdit.getText().length() > 0) try { binding.editor.getSearcher().replaceThis(replaceEdit.getText().toString()); } catch (Exception ignored) {} });
-        
-        replaceAllBtn = new ImageView(this);
-        replaceAllBtn.setImageResource(R.drawable.ic_done_all_white_24dp);
-        replaceAllBtn.setColorFilter(iconColor);
-        replaceAllBtn.setPadding(16, 16, 16, 16);
-        replaceAllBtn.setOnClickListener(v -> { if (findEdit.getText().length() > 0) try { binding.editor.getSearcher().replaceAll(replaceEdit.getText().toString()); } catch (Exception ignored) {} });
-        
-        replaceRow.addView(replaceEdit); replaceRow.addView(replaceBtn); replaceRow.addView(replaceAllBtn);
-        
-        searchPanel.addView(findRow); searchPanel.addView(replaceRow);
-        searchCard.addView(searchPanel);
-        
-        ViewGroup rootView = (ViewGroup) binding.editor.getParent();
-        if (rootView != null) rootView.addView(searchCard, 1);
-        
-        findEdit.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void afterTextChanged(Editable s) {}
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (s != null && s.length() > 0) {
-                    try { binding.editor.getSearcher().search(s.toString(), new EditorSearcher.SearchOptions(EditorSearcher.SearchOptions.TYPE_NORMAL, true)); } catch (Exception ignored) {}
-                } else {
-                    try { binding.editor.getSearcher().stopSearch(); } catch (Exception ignored) {}
+    private void registerContentListener() {
+        Content text = binding.editor.getText();
+        if (editorContentListener == null) {
+            editorContentListener = new ContentListener() {
+                @Override public void beforeReplace(Content content) {}
+                @Override public void afterDelete(Content content, int startLine, int startColumn, int endLine, int endColumn, CharSequence deletedContent) {
+                    scheduleEditorStateRefresh();
+                    triggerRealtimeDiagnostics();
+                    notifyPluginsCodeChanged();
                 }
-            }
+                @Override public void afterInsert(Content content, int startLine, int startColumn, int endLine, int endColumn, CharSequence insertedContent) {
+                    scheduleEditorStateRefresh();
+                    triggerRealtimeDiagnostics();
+                    notifyPluginsCodeChanged();
+                    if (!isProgrammaticEdit) checkAndApplySnippets(startLine, startColumn, endLine, endColumn, insertedContent);
+                }
+            };
+        }
+        text.removeContentListener(editorContentListener);
+        text.addContentListener(editorContentListener);
+    }
+
+    private boolean isContentModified() {
+        return !beforeContent.equals(binding.editor.getText().toString());
+    }
+
+    private void setupSearchPanel() {
+        ViewGroup rootView = (ViewGroup) binding.getRoot();
+        searchBinding = CodeEditorHsSearchPanelBinding.inflate(getLayoutInflater(), rootView, false);
+        rootView.addView(searchBinding.searchCard);
+        UI.addSystemWindowInsetToMargin(searchBinding.searchCard, true, false, true, false);
+
+        searchBinding.btnPrev.setOnClickListener(v -> gotoSearchMatch(false));
+        searchBinding.btnNext.setOnClickListener(v -> gotoSearchMatch(true));
+        searchBinding.btnCloseSearch.setOnClickListener(v -> hideSearchPanel());
+        searchBinding.btnReplace.setOnClickListener(v -> replaceCurrentSearchMatch());
+        searchBinding.btnReplaceAll.setOnClickListener(v -> replaceAllSearchMatches());
+        searchBinding.findEdit.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override public void afterTextChanged(Editable s) { updateFindResults(); }
         });
+        searchBinding.findEdit.setOnEditorActionListener((view, actionId, event) -> {
+            boolean enterPressed = event != null && event.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER
+                    && event.getAction() == android.view.KeyEvent.ACTION_DOWN;
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || enterPressed) {
+                gotoSearchMatch(true);
+                return true;
+            }
+            return false;
+        });
+        searchBinding.searchOptionsGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> updateFindResults());
+    }
+
+    private void openSearchPanel() {
+        if (searchBinding == null) return;
+        searchBinding.searchCard.setVisibility(View.VISIBLE);
+        String selected = getSelectedSingleLineText();
+        if (!selected.isEmpty()) {
+            searchBinding.findEdit.setText(selected);
+            searchBinding.findEdit.setSelection(selected.length());
+        }
+        updateFindResults();
+        searchBinding.findEdit.requestFocus();
+        searchBinding.findEdit.selectAll();
+        showKeyboard(searchBinding.findEdit);
+    }
+
+    private void hideSearchPanel() {
+        if (searchBinding == null) return;
+        try { binding.editor.getSearcher().stopSearch(); } catch (Exception ignored) {}
+        hideKeyboard(searchBinding.findEdit);
+        searchBinding.searchCard.setVisibility(View.GONE);
+        searchBinding.findEdit.setText("");
+        binding.editor.requestFocus();
+    }
+
+    private String getSelectedSingleLineText() {
+        try {
+            io.github.rosemoe.sora.text.Cursor cursor = binding.editor.getCursor();
+            if (!cursor.isSelected()) return "";
+            CharSequence selected = binding.editor.getText().subSequence(cursor.getLeft(), cursor.getRight());
+            if (selected.length() > 120) return "";
+            for (int i = 0; i < selected.length(); i++) if (selected.charAt(i) == '\n') return "";
+            return selected.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void showKeyboard(View view) {
+        view.post(() -> {
+            android.view.inputmethod.InputMethodManager manager =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (manager != null) manager.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        });
+    }
+
+    private void hideKeyboard(View view) {
+        android.view.inputmethod.InputMethodManager manager =
+                (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (manager != null && view != null) manager.hideSoftInputFromWindow(view.getWindowToken(), 0);
+    }
+
+    private String currentQuery() {
+        return searchBinding == null || searchBinding.findEdit.getText() == null ? "" : searchBinding.findEdit.getText().toString();
+    }
+
+    private String buildSearchExpression() {
+        String query = currentQuery();
+        boolean regex = searchBinding.btnRegex.isChecked();
+        String expression = regex ? query : Pattern.quote(query);
+        if (searchBinding.btnWholeWord.isChecked()) expression = "\\b(?:" + expression + ")\\b";
+        return expression;
+    }
+
+    private Pattern buildSearchPattern() {
+        int flags = searchBinding.btnMatchCase.isChecked() ? 0 : (Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        if (searchBinding.btnRegex.isChecked()) flags |= Pattern.MULTILINE;
+        return Pattern.compile(buildSearchExpression(), flags);
+    }
+
+    private void runEditorSearch() {
+        boolean regexMode = searchBinding.btnRegex.isChecked() || searchBinding.btnWholeWord.isChecked();
+        String expression = regexMode ? buildSearchExpression() : currentQuery();
+        int type = regexMode ? EditorSearcher.SearchOptions.TYPE_REGULAR_EXPRESSION : EditorSearcher.SearchOptions.TYPE_NORMAL;
+        binding.editor.getSearcher().search(expression, new EditorSearcher.SearchOptions(type, !searchBinding.btnMatchCase.isChecked()));
+    }
+
+    private void updateFindResults() {
+        if (searchBinding == null) return;
+        if (currentQuery().isEmpty()) {
+            try { binding.editor.getSearcher().stopSearch(); } catch (Exception ignored) {}
+            searchBinding.searchCountView.setText("0 matches");
+            return;
+        }
+        try {
+            Pattern pattern = buildSearchPattern();
+            runEditorSearch();
+            Matcher matcher = pattern.matcher(binding.editor.getText().toString());
+            int count = 0;
+            while (matcher.find()) {
+                if (matcher.start() != matcher.end()) count++;
+            }
+            searchBinding.searchCountView.setText(count + (count == 1 ? " match" : " matches"));
+        } catch (Exception e) {
+            try { binding.editor.getSearcher().stopSearch(); } catch (Exception ignored) {}
+            searchBinding.searchCountView.setText("Invalid pattern");
+        }
+    }
+
+    private void gotoSearchMatch(boolean next) {
+        if (currentQuery().isEmpty()) return;
+        try {
+            if (next) binding.editor.getSearcher().gotoNext();
+            else binding.editor.getSearcher().gotoPrevious();
+        } catch (Exception ignored) {}
+    }
+
+    private List<SearchMatch> findSearchMatches() {
+        Pattern pattern = buildSearchPattern();
+        String template = searchBinding.replaceEdit.getText() == null ? "" : searchBinding.replaceEdit.getText().toString();
+        if (!searchBinding.btnRegex.isChecked()) template = Matcher.quoteReplacement(template);
+        String text = binding.editor.getText().toString();
+        Matcher matcher = pattern.matcher(text);
+        StringBuffer buffer = new StringBuffer();
+        List<SearchMatch> matches = new ArrayList<>();
+        int lastEnd = 0;
+        while (matcher.find()) {
+            if (matcher.start() == matcher.end()) continue;
+            int before = buffer.length();
+            matcher.appendReplacement(buffer, template);
+            String appended = buffer.substring(before);
+            matches.add(new SearchMatch(matcher.start(), matcher.end(), appended.substring(matcher.start() - lastEnd)));
+            lastEnd = matcher.end();
+        }
+        return matches;
+    }
+
+    private void replaceCurrentSearchMatch() {
+        if (currentQuery().isEmpty()) return;
+        try {
+            List<SearchMatch> matches = findSearchMatches();
+            if (matches.isEmpty()) {
+                SketchwareUtil.toast("No matches to replace");
+                return;
+            }
+            int left = binding.editor.getCursor().getLeft();
+            int right = binding.editor.getCursor().getRight();
+            SearchMatch target = null;
+            for (SearchMatch match : matches) {
+                if (match.start == left && match.end == right) { target = match; break; }
+            }
+            if (target == null) {
+                for (SearchMatch match : matches) {
+                    if (match.start >= right) { target = match; break; }
+                }
+                if (target == null) target = matches.get(0);
+            }
+            Content text = binding.editor.getText();
+            isProgrammaticEdit = true;
+            try {
+                text.replace(target.start, target.end, target.replacement);
+            } finally {
+                isProgrammaticEdit = false;
+            }
+            int caret = Math.min(target.start + target.replacement.length(), text.length());
+            io.github.rosemoe.sora.text.CharPosition position = text.getIndexer().getCharPosition(caret);
+            binding.editor.setSelection(position.line, position.column);
+            updateMenuState();
+            updateFindResults();
+        } catch (Exception error) {
+            SketchwareUtil.toastError("Could not replace match: " + error.getMessage());
+        }
+    }
+
+    private void replaceAllSearchMatches() {
+        if (currentQuery().isEmpty()) return;
+        try {
+            List<SearchMatch> matches = findSearchMatches();
+            if (matches.isEmpty()) {
+                SketchwareUtil.toast("No matches to replace");
+                return;
+            }
+            Content text = binding.editor.getText();
+            isProgrammaticEdit = true;
+            try {
+                text.beginBatchEdit();
+                try {
+                    for (int i = matches.size() - 1; i >= 0; i--) {
+                        SearchMatch match = matches.get(i);
+                        text.replace(match.start, match.end, match.replacement);
+                    }
+                } finally {
+                    text.endBatchEdit();
+                }
+            } finally {
+                isProgrammaticEdit = false;
+            }
+            updateMenuState();
+            updateFindResults();
+            SketchwareUtil.toast("Replaced " + matches.size() + (matches.size() == 1 ? " occurrence" : " occurrences"));
+        } catch (Exception error) {
+            SketchwareUtil.toastError("Could not replace matches: " + error.getMessage());
+        }
     }
 
     public void save() {
@@ -1039,7 +1304,7 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                         activitiesComponents.get(i).put("value", beforeContent);
                         FileUtil.writeFile(filePath, getGson().toJson(activitiesComponents));
                         SketchwareUtil.toast("Saved successfully!");
-                        invalidateOptionsMenu();
+                        updateMenuState();
                         return;
                     }
                 }
@@ -1073,7 +1338,7 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                     scId, filePath, neo.sketchware.plugin.NeoEditorLanguage.fromFilePath(filePath)));
         }
         SketchwareUtil.toast("Saved successfully!");
-        invalidateOptionsMenu();
+        updateMenuState();
     }
     
         @Override
@@ -1102,6 +1367,7 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
 
     @Override
     public void onDestroy() {
+        stateHandler.removeCallbacks(stateRefreshRunnable);
         super.onDestroy();
         if (selectionSubscription != null) { try { selectionSubscription.unsubscribe(); } catch (Throwable ignored) {} }
         try { binding.editor.release(); } catch (Throwable ignored) {}
@@ -1113,14 +1379,12 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
             drawerLayout.closeDrawer(GravityCompat.START);
             return;
         }
-        if (searchCard != null && searchCard.getVisibility() == View.VISIBLE) {
-            try { binding.editor.getSearcher().stopSearch(); } catch (Exception ignored) {}
-            searchCard.setVisibility(View.GONE);
-            findEdit.setText("");
+        if (searchBinding != null && searchBinding.searchCard.getVisibility() == View.VISIBLE) {
+            hideSearchPanel();
             return;
         }
 
-        if (beforeContent.equals(binding.editor.getText().toString())) {
+        if (!isContentModified()) {
             super.onBackPressed();
         } else {
             MaterialAlertDialogBuilder dialog = new MaterialAlertDialogBuilder(this);
@@ -1136,47 +1400,28 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
         }
     }
 
+    private Drawable mutableIcon(int resource) {
+        Drawable icon = AppCompatResources.getDrawable(this, resource);
+        return icon == null ? null : icon.mutate();
+    }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         MenuItem undoItem = menu.add(Menu.NONE, 0, Menu.NONE, "Undo");
-        undoItem.setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_undo));
+        undoItem.setIcon(mutableIcon(R.drawable.ic_mtrl_undo));
         undoItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
         MenuItem redoItem = menu.add(Menu.NONE, 1, Menu.NONE, "Redo");
-        redoItem.setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_redo));
+        redoItem.setIcon(mutableIcon(R.drawable.ic_mtrl_redo));
         redoItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
         MenuItem saveItem = menu.add(Menu.NONE, 2, Menu.NONE, "Save");
-        saveItem.setIcon(AppCompatResources.getDrawable(this, R.drawable.ic_mtrl_save));
+        saveItem.setIcon(mutableIcon(R.drawable.ic_mtrl_save));
         saveItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
 
-        if (isLayoutFile()) {
-            menu.add(Menu.NONE, 12, Menu.NONE, "Project Explorer").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        }
-        
-        menu.add(Menu.NONE, 4, Menu.NONE, "Find & Replace").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        menu.add(Menu.NONE, 5, Menu.NONE, "Pretty print").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        
-        if (isLayoutFile() && getIntent().hasExtra("sc_id")) {
-            menu.add(Menu.NONE, 6, Menu.NONE, "Layout Preview").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        }
-        
-        menu.add(Menu.NONE, 7, Menu.NONE, "Select language").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        menu.add(Menu.NONE, 8, Menu.NONE, "Select theme").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        
-        MenuItem wrapItem = menu.add(Menu.NONE, 9, Menu.NONE, "Word wrap");
-        wrapItem.setCheckable(true).setChecked(pref.getBoolean("act_ww", false)).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        
-        MenuItem acItem = menu.add(Menu.NONE, 10, Menu.NONE, "Auto complete");
-        acItem.setCheckable(true).setChecked(pref.getBoolean("act_ac", true)).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        
-        MenuItem acspItem = menu.add(Menu.NONE, 11, Menu.NONE, "Auto complete symbol pair");
-        acspItem.setCheckable(true).setChecked(pref.getBoolean("act_acsp", true)).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-
-        if (!neo.sketchware.plugin.PluginManager.getAllEditorActions().isEmpty()) {
-            menu.add(Menu.NONE, 13, Menu.NONE, "Plugin Actions").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        }
-
+        MenuItem moreItem = menu.add(Menu.NONE, 16, Menu.NONE, "More options");
+        moreItem.setIcon(mutableIcon(R.drawable.ic_mtrl_more_vertical));
+        moreItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         return true;
     }
 
@@ -1207,69 +1452,135 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
             return;
         }
 
-        if (replacement != null) {
-            binding.editor.setText(replacement);
+        if (replacement != null && !replacement.equals(fullText)) {
+            replaceEditorContentKeepingHistory(replacement);
         }
     }
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-        MenuItem undoItem = menu.findItem(0);
-        if (undoItem != null) {
-            try { undoItem.setEnabled(binding.editor.canUndo()); } catch (Exception ignored) {}
-        }
-        MenuItem redoItem = menu.findItem(1);
-        if (redoItem != null) {
-            try { redoItem.setEnabled(binding.editor.canRedo()); } catch (Exception ignored) {}
-        }
-        MenuItem saveItem = menu.findItem(2);
-        if (saveItem != null) {
-            boolean isModified = !beforeContent.equals(binding.editor.getText().toString());
-            saveItem.setEnabled(isModified);
-        }
+        optionsMenu = menu;
+        updateMenuState();
         return super.onPrepareOptionsMenu(menu);
     }
 
-    @Override
-    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        switch (item.getItemId()) {
-            case 0 -> {
-                boolean hadUndo = binding.editor.canUndo();
-                binding.editor.undo();
-                if (hadUndo) {
-                    neo.sketchware.plugin.PluginManager.publishEvent(new neo.sketchware.plugin.NeoEvent.EditorUndo(scId, currentTitle));
-                }
+    private void scheduleEditorStateRefresh() {
+        if (stateRefreshPosted) return;
+        stateRefreshPosted = true;
+        stateHandler.postDelayed(stateRefreshRunnable, 80);
+    }
+
+    private void updateMenuState() {
+        stateHandler.removeCallbacks(stateRefreshRunnable);
+        refreshEditorState();
+    }
+
+    private void refreshEditorState() {
+        stateRefreshPosted = false;
+        if (optionsMenu == null) return;
+        boolean canUndo = false;
+        boolean canRedo = false;
+        try { canUndo = binding.editor.canUndo(); } catch (Exception ignored) {}
+        try { canRedo = binding.editor.canRedo(); } catch (Exception ignored) {}
+        setMenuItemEnabled(optionsMenu.findItem(0), canUndo);
+        setMenuItemEnabled(optionsMenu.findItem(1), canRedo);
+        setMenuItemEnabled(optionsMenu.findItem(2), isContentModified());
+    }
+
+    private void setMenuItemEnabled(@Nullable MenuItem item, boolean enabled) {
+        if (item == null) return;
+        item.setEnabled(enabled);
+        Drawable icon = item.getIcon();
+        if (icon != null) icon.setAlpha(enabled ? 255 : 97);
+    }
+
+    private void performUndo() {
+        boolean hadUndo = binding.editor.canUndo();
+        if (hadUndo) {
+            binding.editor.undo();
+            neo.sketchware.plugin.PluginManager.publishEvent(new neo.sketchware.plugin.NeoEvent.EditorUndo(scId, currentTitle));
+        }
+        updateMenuState();
+        scheduleEditorStateRefresh();
+    }
+
+    private void performRedo() {
+        boolean hadRedo = binding.editor.canRedo();
+        if (hadRedo) {
+            binding.editor.redo();
+            neo.sketchware.plugin.PluginManager.publishEvent(new neo.sketchware.plugin.NeoEvent.EditorRedo(scId, currentTitle));
+        }
+        updateMenuState();
+        scheduleEditorStateRefresh();
+    }
+
+    private void replaceEditorContentKeepingHistory(String newContent) {
+        Content text = binding.editor.getText();
+        int cursorLine = binding.editor.getCursor().getLeftLine();
+        int cursorColumn = binding.editor.getCursor().getLeftColumn();
+        isProgrammaticEdit = true;
+        try {
+            text.beginBatchEdit();
+            try {
+                text.replace(0, text.length(), newContent);
+            } finally {
+                text.endBatchEdit();
+            }
+        } finally {
+            isProgrammaticEdit = false;
+        }
+        int line = Math.max(0, Math.min(cursorLine, text.getLineCount() - 1));
+        int column = Math.max(0, Math.min(cursorColumn, text.getLineString(line).length()));
+        binding.editor.setSelection(line, column);
+        updateMenuState();
+        updateFindResults();
+    }
+
+    private void formatCurrentFile() {
+        String original = binding.editor.getText().toString();
+        boolean isJava = getIntent().hasExtra("java") || (currentTitle != null && currentTitle.endsWith(".java"));
+        boolean isXml = getIntent().hasExtra("xml") || (currentTitle != null && currentTitle.endsWith(".xml"));
+        String formatted;
+        String successMessage;
+        if (isJava) {
+            try {
+                formatted = Lx.j(original, true);
+            } catch (Exception e) {
+                SketchwareUtil.toastError("Your code contains incorrectly nested parentheses");
+                return;
+            }
+            successMessage = "Code Formatted!";
+        } else if (isXml) {
+            formatted = prettifyXml(original, 4, getIntent());
+            if (formatted == null) {
+                SketchwareUtil.toastError("Failed to format XML file");
+                return;
+            }
+            successMessage = "XML Formatted!";
+        } else {
+            SketchwareUtil.toast("Only Java and XML files can be formatted");
+            return;
+        }
+        if (formatted.equals(original)) {
+            SketchwareUtil.toast("Already formatted");
+            return;
+        }
+        replaceEditorContentKeepingHistory(formatted);
+        SketchwareUtil.toast(successMessage);
+    }
+
+    private boolean dispatchOption(int optionId) {
+        switch (optionId) {
+            case 12 -> {
+                if (drawerLayout != null) drawerLayout.openDrawer(GravityCompat.START);
                 return true;
             }
-            case 1 -> {
-                boolean hadRedo = binding.editor.canRedo();
-                binding.editor.redo();
-                if (hadRedo) {
-                    neo.sketchware.plugin.PluginManager.publishEvent(new neo.sketchware.plugin.NeoEvent.EditorRedo(scId, currentTitle));
-                }
+            case 4 -> {
+                openSearchPanel();
                 return true;
             }
-            case 2 -> { save(); return true; }
-            case 13 -> { showPluginActionsDialog(); return true; }
-            case 12 -> { 
-                if (drawerLayout != null) drawerLayout.openDrawer(GravityCompat.START); 
-                return true; 
-            }
-            case 4 -> { if(searchCard != null) searchCard.setVisibility(View.VISIBLE); return true; }
             case 5 -> {
-                if (getIntent().hasExtra("java") || (currentTitle != null && currentTitle.endsWith(".java"))) {
-                    StringBuilder b = new StringBuilder();
-                    for (String line : binding.editor.getText().toString().split("\n")) {
-                        String trims = (line + "X").trim();
-                        if (!trims.isEmpty()) b.append(trims.substring(0, Math.max(0, trims.length() - 1))).append("\n");
-                    }
-                    try { binding.editor.setText(Lx.j(b.toString(), true)); SketchwareUtil.toast("Code Formatted!"); } 
-                    catch (Exception e) { SketchwareUtil.toastError("Your code contains incorrectly nested parentheses"); }
-                } else if (getIntent().hasExtra("xml") || (currentTitle != null && currentTitle.endsWith(".xml"))) {
-                    String format = prettifyXml(binding.editor.getText().toString(), 4, getIntent());
-                    if (format != null) { binding.editor.setText(format); SketchwareUtil.toast("XML Formatted!"); } 
-                    else { SketchwareUtil.toastError("Failed to format XML file"); }
-                } else { SketchwareUtil.toast("Only Java and XML files can be formatted"); }
+                formatCurrentFile();
                 return true;
             }
             case 6 -> {
@@ -1277,9 +1588,12 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                 intent.putExtras(getIntent());
                 intent.putExtra("xml", binding.editor.getText().toString());
                 startActivity(intent);
-                return true; 
+                return true;
             }
-            case 7 -> { showSwitchLanguageDialog(this, binding.editor, (dialog, which) -> { selectLanguage(this, binding.editor, which); dialog.dismiss(); }); return true; }
+            case 7 -> {
+                showSwitchLanguageDialog(this, binding.editor, (dialog, which) -> { selectLanguage(this, binding.editor, which); dialog.dismiss(); });
+                return true;
+            }
             case 8 -> {
                 showSwitchThemeDialog(this, binding.editor, (dialog, which) -> {
                     selectTheme(binding.editor, which);
@@ -1288,25 +1602,65 @@ public class SrcCodeEditor extends BaseAppCompatActivity {
                 });
                 return true;
             }
-            case 9 -> {
-                item.setChecked(!item.isChecked());
-                binding.editor.setWordwrap(item.isChecked());
-                pref.edit().putBoolean("act_ww", item.isChecked()).apply();
+            case 13 -> {
+                showPluginActionsDialog();
                 return true;
             }
-            case 10 -> {
-                item.setChecked(!item.isChecked());
-                binding.editor.getComponent(EditorAutoCompletion.class).setEnabled(item.isChecked());
-                pref.edit().putBoolean("act_ac", item.isChecked()).apply();
+            default -> { return false; }
+        }
+    }
+
+    private void showMoreOptionsSheet() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        CodeEditorHsOptionsBinding sheet = CodeEditorHsOptionsBinding.inflate(getLayoutInflater());
+        sheet.optExplorer.setVisibility(isLayoutFile() && drawerLayout != null ? View.VISIBLE : View.GONE);
+        sheet.optPreview.setVisibility(isLayoutFile() && getIntent().hasExtra("sc_id") ? View.VISIBLE : View.GONE);
+        sheet.optPlugins.setVisibility(neo.sketchware.plugin.PluginManager.getAllEditorActions().isEmpty() ? View.GONE : View.VISIBLE);
+        bindOptionTile(dialog, sheet.optExplorer, 12);
+        bindOptionTile(dialog, sheet.optFind, 4);
+        bindOptionTile(dialog, sheet.optFormat, 5);
+        bindOptionTile(dialog, sheet.optPreview, 6);
+        bindOptionTile(dialog, sheet.optLanguage, 7);
+        bindOptionTile(dialog, sheet.optTheme, 8);
+        bindOptionTile(dialog, sheet.optPlugins, 13);
+        sheet.switchWordWrap.setChecked(pref.getBoolean("act_ww", false));
+        sheet.switchWordWrap.setOnCheckedChangeListener((button, checked) -> {
+            binding.editor.setWordwrap(checked);
+            pref.edit().putBoolean("act_ww", checked).apply();
+        });
+        sheet.switchAutoComplete.setChecked(pref.getBoolean("act_ac", true));
+        sheet.switchAutoComplete.setOnCheckedChangeListener((button, checked) -> {
+            binding.editor.getComponent(EditorAutoCompletion.class).setEnabled(checked);
+            pref.edit().putBoolean("act_ac", checked).apply();
+        });
+        sheet.switchSymbolPair.setChecked(pref.getBoolean("act_acsp", true));
+        sheet.switchSymbolPair.setOnCheckedChangeListener((button, checked) -> {
+            binding.editor.getProps().symbolPairAutoCompletion = checked;
+            pref.edit().putBoolean("act_acsp", checked).apply();
+        });
+        dialog.setContentView(sheet.getRoot());
+        dialog.show();
+    }
+
+    private void bindOptionTile(BottomSheetDialog dialog, View tile, int optionId) {
+        tile.setOnClickListener(v -> {
+            dialog.dismiss();
+            dispatchOption(optionId);
+        });
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        switch (item.getItemId()) {
+            case 0 -> { performUndo(); return true; }
+            case 1 -> { performRedo(); return true; }
+            case 2 -> {
+                if (isContentModified()) save();
+                else SketchwareUtil.toast("No changes to save");
                 return true;
             }
-            case 11 -> {
-                item.setChecked(!item.isChecked());
-                binding.editor.getProps().symbolPairAutoCompletion = item.isChecked();
-                pref.edit().putBoolean("act_acsp", item.isChecked()).apply();
-                return true;
-            }
-            default -> { return super.onOptionsItemSelected(item); }
+            case 16 -> { showMoreOptionsSheet(); return true; }
+            default -> { return dispatchOption(item.getItemId()) || super.onOptionsItemSelected(item); }
         }
     }
     

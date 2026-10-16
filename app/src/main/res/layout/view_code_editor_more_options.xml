@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/more_options_card"
+    android:layout_width="280dp"
+    android:layout_height="wrap_content"
+    app:cardBackgroundColor="?attr/colorSurfaceContainerHigh"
+    app:cardCornerRadius="20dp"
+    app:cardElevation="0dp"
+    app:strokeColor="?attr/colorOutlineVariant"
+    app:strokeWidth="1dp">
+
+    <ScrollView
+        android:id="@+id/more_options_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fillViewport="false"
+        android:overScrollMode="ifContentScrolls"
+        android:scrollbars="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:text="EDITOR"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
+                android:textColor="?attr/colorPrimary"
+                android:textStyle="bold" />
+
+            <LinearLayout android:id="@+id/row_explorer" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_folder_open" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Project Explorer" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_find_replace" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_find_replace" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Find &amp; Replace" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_format_code" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_formattext" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Format Code" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_layout_preview" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_preview" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Layout Preview" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_quick_layout" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_grid" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Quick Layout" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_select_language" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_code" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Select Language" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_editor_settings" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_settings" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Editor Settings" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_about" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_info" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="About" />
+            </LinearLayout>
+
+            <com.google.android.material.divider.MaterialDivider
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginHorizontal="12dp"
+                android:layout_marginVertical="6dp"
+                app:dividerColor="?attr/colorOutlineVariant" />
+
+            <LinearLayout android:id="@+id/row_word_wrap" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_formattext" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Word wrap" />
+                <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switch_word_wrap" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="Word wrap" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_auto_complete" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_code" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Auto complete" />
+                <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switch_auto_complete" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="Auto complete" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/row_symbol_pairs" style="@style/EditorMoreOptionRow">
+                <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_mtrl_code" app:tint="?attr/colorOnSurfaceVariant" />
+                <TextView style="@style/EditorMoreOptionText" android:text="Auto complete symbol pair" />
+                <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switch_symbol_pairs" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="Auto complete symbol pair" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</com.google.android.material.card.MaterialCardView>
