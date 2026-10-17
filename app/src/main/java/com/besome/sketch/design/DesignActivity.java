@@ -126,8 +126,9 @@ import mod.jbk.diagnostic.MissingFileException;
 import mod.jbk.util.LogUtil;
 import mod.khaled.logcat.LogReaderActivity;
 import mod.sketchlibx.search.GlobalSearchDialog;
-import mod.sketchlibx.terminal.NeoTerminalView;
+import mod.sketchlibx.terminal.TerminalBuildBridge;
 import mod.sketchlibx.terminal.TerminalFragment;
+import mod.sketchlibx.terminal.TerminalSessionManager;
 import mod.hilal.saif.activities.tools.ConfigActivity;
 import neo.sketchware.plugin.ui.PluginsTabFragment;
 import pro.sketchware.R;
@@ -146,8 +147,6 @@ import pro.sketchware.utility.apk.ApkSignatures;
 
 public class DesignActivity extends BaseAppCompatActivity implements View.OnClickListener {
     public static String sc_id;
-    
-    private String terminalPlacement; 
     
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final FirebaseCrashlytics crashlytics = FirebaseCrashlytics.getInstance();
@@ -220,9 +219,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     private PluginsTabFragment pluginsTabAdapter;
     private boolean pluginsTabEnabled;
     private Toolbar toolbar;
-    private android.widget.FrameLayout terminalSlidePanel;
-    private mod.sketchlibx.terminal.NeoTerminalView terminalSlidePanelView;
-    private boolean terminalPanelOpen = false;
     
     private final ActivityResultLauncher<Intent> openImageManager = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         if (result.getResultCode() == RESULT_OK) {
@@ -254,6 +250,28 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                     currentBuildTask.cancelBuild();
                 }
             }
+        }
+    };
+
+    private final TerminalBuildBridge.Host terminalBuildHost = new TerminalBuildBridge.Host() {
+        @Override
+        public boolean isBuildRunning() {
+            return currentBuildTask != null && currentBuildTask.running;
+        }
+
+        @Override
+        public boolean startBuild(TerminalBuildBridge.Listener listener) {
+            if (Looper.myLooper() != Looper.getMainLooper() || isFinishing() || isDestroyed() || isBuildRunning()) return false;
+            BuildTask buildTask = new BuildTask(DesignActivity.this, listener);
+            currentBuildTask = buildTask;
+            buildTask.execute();
+            return true;
+        }
+
+        @Override
+        public void cancelBuild() {
+            BuildTask buildTask = currentBuildTask;
+            if (buildTask != null && buildTask.running && !buildTask.canceled) buildTask.cancelBuild();
         }
     };
 
@@ -445,8 +463,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
     public void onBackPressed() {
         if (drawer.isDrawerOpen(GravityCompat.END)) {
             drawer.closeDrawer(GravityCompat.END);
-        } else if (terminalPanelOpen) {
-            setTerminalPanelOpen(false);
         } else if (viewTabAdapter != null && viewTabAdapter.isPropertyViewVisible()) {
             hideViewPropertyView();
         } else {
@@ -496,7 +512,8 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         r = new DB(getApplicationContext(), "P1");
         t = new DB(getApplicationContext(), "P12");
         
-        terminalPlacement = ConfigActivity.getStringSettingValueOrSetAndGet(ConfigActivity.SETTING_TERMINAL_PLACEMENT, "0");
+        TerminalSessionManager.releaseAllExcept(this, sc_id);
+        TerminalBuildBridge.register(sc_id, terminalBuildHost);
 
         toolbar = findViewById(R.id.toolbar);
         toolbar.setSubtitle(sc_id);
@@ -507,10 +524,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         drawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
 
         Insetter.builder().margin(WindowInsetsCompat.Type.navigationBars()).applyToView(findViewById(R.id.container));
-
-        if (terminalPlacement.equals("1")) {
-            setupTerminalSlidePanel();
-        }
 
         coordinatorLayout = findViewById(R.id.layout_coordinator);
         fileName = findViewById(R.id.file_name);
@@ -606,13 +619,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
             return true;
         });
         
-        if (terminalPlacement.equals("1")) {
-            bottomMenu.add(Menu.NONE, 88, Menu.NONE, "Open Terminal").setOnMenuItemClickListener(item -> {
-                showTerminalBottomSheet();
-                return true;
-            });
-        }
-        
         bottomPopupMenu.setOnDismissListener(menu -> btnOptions.setChecked(false));
 
         xmlLayoutOrientation = findViewById(R.id.img_orientation);
@@ -682,169 +688,7 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         fProgress = new FloatingProgressWindow();
     }
     
-    private void setupTerminalSlidePanel() {
-        android.widget.RelativeLayout container = findViewById(R.id.container);
-
-        terminalSlidePanel = new android.widget.FrameLayout(this);
-        android.widget.RelativeLayout.LayoutParams panelParams = new android.widget.RelativeLayout.LayoutParams(
-                android.widget.RelativeLayout.LayoutParams.MATCH_PARENT, android.widget.RelativeLayout.LayoutParams.MATCH_PARENT);
-        terminalSlidePanel.setLayoutParams(panelParams);
-        terminalSlidePanel.setElevation(getResources().getDisplayMetrics().density * 24);
-        terminalSlidePanel.setBackgroundColor(android.graphics.Color.parseColor("#121212"));
-
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setLayoutParams(new android.widget.FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        terminalSlidePanelView = new NeoTerminalView(this, sc_id);
-        terminalSlidePanelView.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        column.addView(terminalSlidePanelView);
-
-        android.widget.FrameLayout handleRow = new android.widget.FrameLayout(this);
-        int handleHeight = (int) (getResources().getDisplayMetrics().density * 28);
-        handleRow.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, handleHeight));
-        handleRow.setBackgroundColor(android.graphics.Color.parseColor("#1E1E1E"));
-        View handle = new View(this);
-        int density = (int) getResources().getDisplayMetrics().density;
-        android.widget.FrameLayout.LayoutParams handleParams = new android.widget.FrameLayout.LayoutParams(density * 36, density * 4);
-        handleParams.gravity = android.view.Gravity.CENTER;
-        handle.setLayoutParams(handleParams);
-        android.graphics.drawable.GradientDrawable handleBg = new android.graphics.drawable.GradientDrawable();
-        handleBg.setColor(android.graphics.Color.parseColor("#4D4D4D"));
-        handleBg.setCornerRadius(density * 2);
-        handle.setBackground(handleBg);
-        handleRow.addView(handle);
-        column.addView(handleRow);
-
-        terminalSlidePanel.addView(column);
-        terminalSlidePanel.setVisibility(View.INVISIBLE); 
-
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(terminalSlidePanel, (v, insets) -> {
-            int statusTop = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
-            int navBottom = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom;
-            v.setPadding(0, statusTop, 0, navBottom);
-            return insets;
-        });
-        androidx.core.view.ViewCompat.requestApplyInsets(terminalSlidePanel);
-
-        container.addView(terminalSlidePanel);
-
-        toolbar.setOnTouchListener(new EdgeDragListener(true));
-        handleRow.setOnTouchListener(new EdgeDragListener(false));
-    }
-
-    private class EdgeDragListener implements View.OnTouchListener {
-        private final boolean opensPanel;
-        private float startY;
-        private boolean dragging = false;
-        private final int touchSlop = android.view.ViewConfiguration.get(DesignActivity.this).getScaledTouchSlop();
-        private android.view.VelocityTracker velocityTracker;
-
-        EdgeDragListener(boolean opensPanel) {
-            this.opensPanel = opensPanel;
-        }
-
-        @Override
-        public boolean onTouch(View v, android.view.MotionEvent event) {
-            int panelHeight = terminalSlidePanel.getHeight();
-            if (panelHeight == 0) return false;
-
-            switch (event.getActionMasked()) {
-                case android.view.MotionEvent.ACTION_DOWN:
-                    startY = event.getRawY();
-                    dragging = false;
-                    if (velocityTracker != null) velocityTracker.recycle();
-                    velocityTracker = android.view.VelocityTracker.obtain();
-                    velocityTracker.addMovement(event);
-                    return false; 
-
-                case android.view.MotionEvent.ACTION_MOVE: {
-                    if (velocityTracker != null) velocityTracker.addMovement(event);
-                    float dy = event.getRawY() - startY;
-                    boolean correctDirection = opensPanel ? dy > 0 : dy < 0;
-                    if (!dragging && correctDirection && Math.abs(dy) > touchSlop) {
-                        dragging = true;
-                        if (opensPanel && !terminalPanelOpen) {
-                            terminalSlidePanel.setTranslationY(-panelHeight);
-                            terminalSlidePanel.setVisibility(View.VISIBLE);
-                        }
-                    }
-                    if (dragging) {
-                        float translation = opensPanel
-                                ? Math.min(0, -panelHeight + dy)
-                                : Math.min(0, Math.max(-panelHeight, dy));
-                        terminalSlidePanel.setTranslationY(translation);
-                        return true;
-                    }
-                    return false;
-                }
-
-                case android.view.MotionEvent.ACTION_UP:
-                case android.view.MotionEvent.ACTION_CANCEL:
-                    if (dragging) {
-                        float currentY = terminalSlidePanel.getTranslationY();
-                        float openness = 1f + (currentY / panelHeight);
-
-                        float flingVelocity = 0f;
-                        if (velocityTracker != null) {
-                            velocityTracker.computeCurrentVelocity(1000); 
-                            flingVelocity = velocityTracker.getYVelocity();
-                        }
-                        boolean fastFlingInExpectedDirection = opensPanel
-                                ? flingVelocity > 800f
-                                : flingVelocity < -800f;
-
-                        boolean shouldBeOpen = fastFlingInExpectedDirection
-                                ? opensPanel
-                                : (opensPanel ? openness > 0.30f : openness > 0.75f);
-                        setTerminalPanelOpen(shouldBeOpen);
-                        dragging = false;
-                        if (velocityTracker != null) {
-                            velocityTracker.recycle();
-                            velocityTracker = null;
-                        }
-                        return true;
-                    }
-                    if (velocityTracker != null) {
-                        velocityTracker.recycle();
-                        velocityTracker = null;
-                    }
-                    return false;
-
-                default:
-                    return false;
-            }
-        }
-    }
-
-    private void setTerminalPanelOpen(boolean open) {
-        if (terminalSlidePanel == null) return;
-        int height = terminalSlidePanel.getHeight();
-        if (open) {
-            if (height == 0) return; 
-            if (terminalSlidePanel.getVisibility() != View.VISIBLE) {
-                terminalSlidePanel.setTranslationY(-height);
-                terminalSlidePanel.setVisibility(View.VISIBLE);
-            }
-        }
-        terminalPanelOpen = open;
-        terminalSlidePanel.animate()
-                .translationY(open ? 0 : -height)
-                .setDuration(220)
-                .withEndAction(() -> {
-                    if (!open) terminalSlidePanel.setVisibility(View.INVISIBLE);
-                })
-                .start();
-    }
-
-    private void showTerminalBottomSheet() {
-        if (terminalSlidePanel == null) setupTerminalSlidePanel();
-        terminalSlidePanel.post(() -> setTerminalPanelOpen(true)); 
-    }
-
-    private void checkAndInitGit() {
+private void checkAndInitGit() {
         String gitWorkspacePath = FileUtil.getExternalStorageDir() + "/.sketchware/data/" + sc_id + "/git_workspace";
         File gitWorkspace = new File(gitWorkspacePath);
         File gitDir = new File(gitWorkspace, ".git");
@@ -911,7 +755,9 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
 
     @Override
     public void onDestroy() {
+        TerminalBuildBridge.unregister(sc_id, terminalBuildHost);
         super.onDestroy();
+        if (isFinishing()) TerminalSessionManager.releaseProject(this, sc_id);
         unregisterReceiver(buildCancelReceiver);
         fProgress.exit();
     }
@@ -1307,8 +1153,15 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         private volatile boolean isBuildFinished;
         private boolean isShowingNotification = false;
         private FloatingProgressWindow fProgress;
+        private final TerminalBuildBridge.Listener terminalListener;
+        private volatile boolean terminalResultReported;
+        volatile boolean running;
 
         public BuildTask(DesignActivity activity) {
+            this(activity, null);
+        }
+
+        public BuildTask(DesignActivity activity, TerminalBuildBridge.Listener terminalListener) {
             super(activity);
             notificationManager = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
             btnRun = activity.btnRun;
@@ -1317,9 +1170,29 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
             progressText = activity.findViewById(R.id.progress_text);
             progressBar = activity.findViewById(R.id.progress);
             fProgress = activity.fProgress;
+            this.terminalListener = terminalListener;
+        }
+
+        private void reportTerminalSuccess(String apkPath) {
+            if (terminalListener == null || terminalResultReported) return;
+            terminalResultReported = true;
+            terminalListener.onSuccess(apkPath);
+        }
+
+        private void reportTerminalFailure(String message) {
+            if (terminalListener == null || terminalResultReported) return;
+            terminalResultReported = true;
+            terminalListener.onFailure(message);
+        }
+
+        private void reportTerminalCanceled() {
+            if (terminalListener == null || terminalResultReported) return;
+            terminalResultReported = true;
+            terminalListener.onCanceled();
         }
 
         public void execute() {
+            running = true;
             onPreExecute();
             executorService.execute(this::doInBackground);
         }
@@ -1421,11 +1294,14 @@ if (canceled) return;
                 onProgress("Signing APK...", 20);
                 builder.signDebugApk();
                 if (canceled) return;
-                activity.installBuiltApk();
+                if (terminalListener == null) activity.installBuiltApk();
                 isBuildFinished = true;
                 neo.sketchware.plugin.PluginManager.notifyBuildSuccess(sc_id);
+                reportTerminalSuccess(q.finalToInstallApkPath);
             } catch (MissingFileException e) {
                 isBuildFinished = true;
+                reportTerminalFailure((e.isMissingDirectory() ? "A required directory is missing: " : "A required file is missing: ")
+                        + e.getMissingFile().getAbsolutePath());
                 activity.runOnUiThread(() -> {
                     boolean isMissingDirectory = e.isMissingDirectory();
                     MaterialAlertDialogBuilder dialog = new MaterialAlertDialogBuilder(activity);
@@ -1451,14 +1327,19 @@ if (canceled) return;
                 });
             } catch (zy zy) {
                 isBuildFinished = true;
+                reportTerminalFailure(zy.getMessage());
                 activity.indicateCompileErrorOccurred(zy.getMessage());
                 neo.sketchware.plugin.PluginManager.notifyBuildError(sc_id, zy.getMessage());
             } catch (Throwable tr) {
                 isBuildFinished = true;
                 LogUtil.e("DesignActivity$BuildTask", "Failed to build project", tr);
+                reportTerminalFailure(tr.getClass().getSimpleName() + ": " + tr.getMessage());
                 activity.indicateCompileErrorOccurred(Log.getStackTraceString(tr));
                 neo.sketchware.plugin.PluginManager.notifyBuildError(sc_id, Log.getStackTraceString(tr));
             } finally {
+                if (canceled) reportTerminalCanceled();
+                reportTerminalFailure("The build stopped before it finished.");
+                running = false;
                 activity.runOnUiThread(this::onPostExecute);
             }
         }
@@ -1468,6 +1349,7 @@ if (canceled) return;
             int totalSteps = 20;
             DesignActivity activity = getActivity();
             if (activity == null) return;
+            if (terminalListener != null && step >= 0) terminalListener.onProgress(progress);
             activity.runOnUiThread(() -> {
                 progressBar.setIndeterminate(step == -1);
                 if (!canceled) {
@@ -1729,18 +1611,11 @@ if (canceled) return;
 
         public ViewPagerAdapter(FragmentManager fragmentManager) {
             super(fragmentManager);
-            if (terminalPlacement.equals("0")) {
-                labels = new String[]{
-                        Helper.getResString(R.string.design_tab_title_view),
-                        Helper.getResString(R.string.design_tab_title_event),
-                        Helper.getResString(R.string.design_tab_title_component),
-                        "Terminal"};
-            } else {
-                labels = new String[]{
-                        Helper.getResString(R.string.design_tab_title_view),
-                        Helper.getResString(R.string.design_tab_title_event),
-                        Helper.getResString(R.string.design_tab_title_component)};
-            }
+            labels = new String[]{
+                    Helper.getResString(R.string.design_tab_title_view),
+                    Helper.getResString(R.string.design_tab_title_event),
+                    Helper.getResString(R.string.design_tab_title_component),
+                    "Terminal"};
         }
 
         @Override public int getCount() { return labels.length; }

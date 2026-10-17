@@ -15,7 +15,7 @@ libsu = "5.0.4"
 dependencyresolver = "05ec26af0b"
 ecj = "3.33.0"
 exifinterface = "1.4.2"
-filepicker = "74526bea66"
+filepicker = "v2.1.0"
 flexbox = "3.0.0"
 glide = "5.0.4"
 gson = "2.14.0"
@@ -86,7 +86,7 @@ insetter = { module = "dev.chrisbanes.insetter:insetter", version.ref = "insette
 javaparser-symbol-solver = { module = "com.github.javaparser:javaparser-symbol-solver-core", version.ref = "javaparserSymbolSolver" }
 libsu = { module = "com.github.topjohnwu.libsu:core", version.ref = "libsu" }
 dependencyresolver = { module = "com.github.Cosmic-Ide:DependencyResolver", version.ref = "dependencyresolver" }
-filepicker = { module = "com.github.PranavPurwar:filepicker", version.ref = "filepicker" }
+filepicker = { module = "com.github.sketchlibx:filepicker", version.ref = "filepicker" }
 
 markwon = { module = "io.noties.markwon:core", version.ref = "markwon" }
 

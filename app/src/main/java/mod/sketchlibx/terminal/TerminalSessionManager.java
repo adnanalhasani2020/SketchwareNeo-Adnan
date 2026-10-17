@@ -55,6 +55,33 @@ public final class TerminalSessionManager {
         return value.isEmpty() ? "unknown" : value;
     }
 
+    public static synchronized boolean hasSessions(String scId) {
+        List<Entry> sessions = PROJECT_SESSIONS.get(normalizeProjectId(scId));
+        return sessions != null && !sessions.isEmpty();
+    }
+
+    /** Stops every session of this project and discards its output and generated helper script. */
+    public static synchronized void releaseProject(Context context, String scId) {
+        String projectId = normalizeProjectId(scId);
+        killAllSessions(projectId);
+        deleteInitScript(context.getApplicationContext(), projectId);
+    }
+
+    /** Releases sessions that belong to any project other than {@code activeScId}. */
+    public static synchronized void releaseAllExcept(Context context, String activeScId) {
+        String activeId = normalizeProjectId(activeScId);
+        for (String projectId : new ArrayList<>(PROJECT_SESSIONS.keySet())) {
+            if (!projectId.equals(activeId)) releaseProject(context, projectId);
+        }
+    }
+
+    private static void deleteInitScript(Context appContext, String projectId) {
+        File initFile = new File(new File(appContext.getFilesDir(), "terminal"), "session-init-" + projectId + ".sh");
+        if (initFile.isFile() && !initFile.delete()) {
+            android.util.Log.w("NeoTerminal", "Could not delete terminal helper script " + initFile.getName());
+        }
+    }
+
     public static synchronized List<Entry> getSessions(String scId) {
         String projectId = normalizeProjectId(scId);
         return PROJECT_SESSIONS.computeIfAbsent(projectId, k -> new CopyOnWriteArrayList<>());
@@ -118,7 +145,7 @@ public final class TerminalSessionManager {
 
         List<String> binDirs = collectToolchainBinDirs(appContext);
         String shellPath = resolveShell(binDirs);
-        String[] env = buildEnvironment(appContext, homeDir, binDirs, initScript);
+        String[] env = buildEnvironment(appContext, scId, homeDir, binDirs, initScript);
         String[] args = {shellPath, "-i"};
 
         return new TerminalSession(shellPath, homeDir, args, env, 4000, client);
@@ -175,7 +202,7 @@ public final class TerminalSessionManager {
         return file.isFile() && file.canExecute();
     }
 
-    private static String[] buildEnvironment(Context appContext, String homeDir, List<String> binDirs, File initScript) {
+    private static String[] buildEnvironment(Context appContext, String scId, String homeDir, List<String> binDirs, File initScript) {
         List<String> env = new ArrayList<>();
         Set<String> basePathEntries = new LinkedHashSet<>();
         String systemPath = System.getenv("PATH");
@@ -201,6 +228,8 @@ public final class TerminalSessionManager {
         env.add("HOME=" + homeDir);
         env.add("PWD=" + homeDir);
         env.add("SW_PROJECT_DIR=" + homeDir);
+        env.add("SW_PROJECT_ID=" + scId);
+        env.add("SW_IPC=" + TerminalCommandReceiver.getIpcDirectory(appContext).getAbsolutePath());
         env.add("TMPDIR=" + appContext.getCacheDir().getAbsolutePath());
         env.add("TERM=xterm-256color");
         env.add("COLORTERM=truecolor");
@@ -251,91 +280,43 @@ public final class TerminalSessionManager {
     }
 
     /**
-     * Installs the same helper set in every shell session. Commands use the Android shell and
-     * installed toolchain binaries only; this does not pretend that Termux/pkg/npm are installed.
+     * Installs the same helper set in every shell session. Every helper is either a thin wrapper
+     * around an installed tool or a request to the app (see {@link TerminalCommandReceiver}); none
+     * of them evaluates user input as shell code.
      */
-    private static File writeInitScript(Context appContext, String projectId) {
-        String filesDir = appContext.getFilesDir().getAbsolutePath();
-        String ndkDir = filesDir + "/ndk";
-        String cmakeDir = filesDir + "/cmake";
-        String pkg = appContext.getPackageName();
-        String quotedNdk = shellQuote(ndkDir);
-        String quotedCmake = shellQuote(cmakeDir);
-        String quotedPackage = shellQuote(pkg);
+    static String buildInitScript(String filesDir, String packageName, String projectId) {
+        StringBuilder help = new StringBuilder();
+        for (String line : TerminalCommands.HELP_LINES) {
+            help.append("  printf '%s\\n' ").append(shellQuote(line)).append("\n");
+        }
+        return SCRIPT_TEMPLATE
+                .replace("@NDK_DIR@", shellQuote(filesDir + "/ndk"))
+                .replace("@CMAKE_DIR@", shellQuote(filesDir + "/cmake"))
+                .replace("@PACKAGE@", shellQuote(packageName))
+                .replace("@ACTION@", TerminalCommands.ACTION_COMMAND)
+                .replace("@PROJECT_ID@", projectId)
+                .replace("@HELP_LINES@", help.toString())
+                .replace("@BUILD@", TerminalCommands.COMMAND_BUILD)
+                .replace("@CANCEL_BUILD@", TerminalCommands.COMMAND_CANCEL_BUILD)
+                .replace("@CLEAN_CACHE@", TerminalCommands.COMMAND_CLEAN_CACHE)
+                .replace("@CLEAN_GRADLE@", TerminalCommands.COMMAND_CLEAN_GRADLE_BACKUPS);
+    }
 
-        StringBuilder script = new StringBuilder(3000);
-        script.append("NDK_DIR=").append(quotedNdk).append("\n")
-                .append("CMAKE_DIR=").append(quotedCmake).append("\n")
-                .append("SW_PACKAGE=").append(quotedPackage).append("\n")
-                .append("clear\n")
-                .append("printf '\033[1;32m'; echo 'Sketchware Neo Terminal'; printf '\033[0m'\n")
-                .append("echo 'Project ID: ").append(projectId).append("'\n")
-                .append("echo 'Working directory:'; pwd\n")
-                .append("sw_refresh_path() {\n")
-                .append("  PATH=${SW_BASE_PATH:-$PATH}; unset ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME CMAKE_HOME\n")
-                .append("  cmake_bin=\"$CMAKE_DIR/3.22.1/bin\"; if [ -x \"$cmake_bin/cmake\" ]; then PATH=\"$cmake_bin:$PATH\"; CMAKE_HOME=\"$CMAKE_DIR/3.22.1\"; fi\n")
-                .append("  for d in \"$NDK_DIR\"/*/; do [ -f \"$d/build/cmake/android.toolchain.cmake\" ] || continue; ndk_root=${d%/}; for host in linux-aarch64 linux-arm64 android-arm64 android-aarch64; do bin=\"$ndk_root/toolchains/llvm/prebuilt/$host/bin\"; if [ -x \"$bin/clang\" ] || [ -x \"$bin/clang++\" ]; then PATH=\"$bin:$PATH\"; ANDROID_NDK_HOME=\"$ndk_root\"; ANDROID_NDK_ROOT=\"$ndk_root\"; NDK_HOME=\"$ndk_root\"; break; fi; done; [ -n \"${ANDROID_NDK_HOME:-}\" ] && break; done\n")
-                .append("  export PATH ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME CMAKE_HOME\n")
-                .append("}\n")
-                .append("sw_refresh_path\n")
-                .append("ndk_status() {\n")
-                .append("  sw_refresh_path\n")
-                .append("  if [ -x \"$CMAKE_DIR/3.22.1/bin/cmake\" ]; then \"$CMAKE_DIR/3.22.1/bin/cmake\" --version 2>/dev/null | head -1; else echo 'CMake 3.22.1: not installed'; fi\n")
-                .append("  found=0; for d in \"$NDK_DIR\"/*/; do [ -f \"$d/build/cmake/android.toolchain.cmake\" ] || continue; echo \"NDK: $(basename \"$d\")\"; found=1; done; [ \"$found\" -eq 1 ] || echo 'NDK: not installed'\n")
-                .append("  command -v ninja >/dev/null 2>&1 && echo \"Ninja: $(ninja --version 2>/dev/null)\" || echo 'Ninja: not installed'\n")
-                .append("}\n")
-                .append("ndk_install() {\n")
-                .append("  if [ -z \"$1\" ]; then echo 'Usage: ndk_install <https://ndk-archive.zip>'; return 2; fi\n")
-                .append("  case \"$1\" in https://*|http://*) ;; *) echo 'Use an http:// or https:// archive URL.'; return 2 ;; esac\n")
-                .append("  command -v am >/dev/null 2>&1 || { echo 'Android Activity Manager (am) is unavailable in PATH.'; return 127; }\n")
-                .append("  result=$(am broadcast -a mod.sketchlibx.terminal.ACTION_INSTALL_NDK -n \"$SW_PACKAGE/mod.sketchlibx.terminal.NdkInstallReceiver\" --es ndk_url \"$1\" 2>&1); rc=$?; printf '%s\\n' \"$result\"\n")
-                .append("  [ \"$rc\" -eq 0 ] || { echo 'Could not send the install request.'; return \"$rc\"; }\n")
-                .append("  echo 'Request sent. Installation runs in the background; use ndk_status to check the result.'\n")
-                .append("}\n")
-                .append("ndk_uninstall() {\n")
-                .append("  echo 'This removes the installed NDK and CMake directories used by Sketchware Neo.'\n")
-                .append("  printf 'Type yes to continue: '; IFS= read -r answer\n")
-                .append("  [ \"$answer\" = yes ] || { echo 'Cancelled.'; return 1; }\n")
-                .append("  rm -rf -- \"$NDK_DIR\" \"$CMAKE_DIR\" || return $?\n")
-                .append("  sw_refresh_path\n")
-                .append("  echo 'NDK/CMake files removed.'\n")
-                .append("}\n")
-                .append("sw_help() {\n")
-                .append("  echo 'Android shell: pwd, ls, cd, mkdir, cp, mv, rm, cat, grep, find, sed, awk, head, tail, wc, chmod, env, getprop, am'\n")
-                .append("  echo 'Neo helpers: sw_help, swdoctor, sw_project, gradlew <tasks>, ndk_status, ndk_install <url>, ndk_uninstall'\n")
-                .append("  echo 'npm, pkg, git, cmake, ninja and clang work only when their executable is installed and accessible.'\n")
-                .append("  echo 'Use gradlew <tasks> without ./ for a helpful wrapper check; ./gradlew requires an actual file in this directory.'\n")
-                .append("  echo 'Sketchware app projects in .sketchware/data/<id> are not Gradle source repositories. Use Sketchware Build/Run for those projects.'\n")
-                .append("}\n")
-                .append("sw_project() { echo 'Project directory:'; printf '%s\\n' \"$SW_PROJECT_DIR\"; echo 'Files:'; ls -la; }\n")
-                .append("gradlew() {\n")
-                .append("  if [ -f ./gradlew ]; then sh ./gradlew \"$@\"; return $?; fi\n")
-                .append("  if command -v gradle >/dev/null 2>&1; then gradle \"$@\"; return $?; fi\n")
-                .append("  echo 'No Gradle wrapper was found in this directory, and system Gradle is not installed.'\n")
-                .append("  echo \"Current directory: $PWD\"\n")
-                .append("  case \"$PWD\" in */.sketchware/data/*) echo 'This is a Sketchware app-project data directory, not the Sketchware Neo Android source repository. Build the app with Sketchware Build/Run; build Neo itself from its source repository.' ;; *) echo 'Change to a Gradle repository root containing gradlew and gradle/wrapper, then retry.' ;; esac\n")
-                .append("  return 127\n")
-                .append("}\n")
-                .append("swdoctor() {\n")
-                .append("  echo '--- Sketchware Neo Terminal diagnostics ---'; echo \"Directory: $PWD\"; echo \"UID: $(id 2>/dev/null)\"; echo \"Android: $(getprop ro.build.version.release 2>/dev/null)\"; echo\n")
-                .append("  for c in sh ls cat grep find sed awk git gradle npm node pkg cmake ninja clang clang++ am; do command -v \"$c\" >/dev/null 2>&1 && printf '  [OK]   %s: %s\\n' \"$c\" \"$(command -v \"$c\")\" || printf '  [MISS] %s\\n' \"$c\"; done\n")
-                .append("  echo '  [OK]   Neo helper: gradlew (run without ./)'\n")
-                .append("  if [ -f ./gradlew ]; then echo 'Gradle wrapper: present in current directory'; else echo 'Gradle wrapper: not present in current directory'; fi\n")
-                .append("  ndk_status\n")
-                .append("}\n")
-                .append("alias ll='ls -la'\n")
-                .append("echo 'Helpers: sw_help | swdoctor | sw_project | ndk_status'\n")
-                .append("ndk_status\n")
-                .append("echo 'Build a Sketchware project with Build/Run; this shell starts in the project data directory.'\n")
-                .append("echo\n");
+    private static File writeInitScript(Context appContext, String projectId) {
+        String script = buildInitScript(appContext.getFilesDir().getAbsolutePath(), appContext.getPackageName(), projectId);
+
         File scriptsDir = new File(appContext.getFilesDir(), "terminal");
         File initFile = new File(scriptsDir, "session-init-" + projectId + ".sh");
+        File ipcDir = TerminalCommandReceiver.getIpcDirectory(appContext);
         try {
             if (!scriptsDir.isDirectory() && !scriptsDir.mkdirs() && !scriptsDir.isDirectory()) {
                 throw new IOException("Could not create terminal helper directory");
             }
+            if (!ipcDir.isDirectory() && !ipcDir.mkdirs() && !ipcDir.isDirectory()) {
+                throw new IOException("Could not create terminal request directory");
+            }
             try (FileOutputStream output = new FileOutputStream(initFile, false)) {
-                output.write(script.toString().getBytes(StandardCharsets.UTF_8));
+                output.write(script.getBytes(StandardCharsets.UTF_8));
                 output.flush();
             }
             return initFile;
@@ -349,4 +330,112 @@ public final class TerminalSessionManager {
         return "'" + value.replace("'", "'\\''") + "'";
     }
 
+
+    private static final String SCRIPT_TEMPLATE = """
+NDK_DIR=@NDK_DIR@
+CMAKE_DIR=@CMAKE_DIR@
+SW_PACKAGE=@PACKAGE@
+clear
+printf '\\033[1;32m'; echo 'Sketchware Neo Terminal'; printf '\\033[0m'
+echo 'Project ID: @PROJECT_ID@'
+echo 'Working directory:'; pwd
+sw_refresh_path() {
+  PATH=${SW_BASE_PATH:-$PATH}; unset ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME CMAKE_HOME
+  cmake_bin="$CMAKE_DIR/3.22.1/bin"; if [ -x "$cmake_bin/cmake" ]; then PATH="$cmake_bin:$PATH"; CMAKE_HOME="$CMAKE_DIR/3.22.1"; fi
+  for d in "$NDK_DIR"/*/; do [ -f "$d/build/cmake/android.toolchain.cmake" ] || continue; ndk_root=${d%/}; for host in linux-aarch64 linux-arm64 android-arm64 android-aarch64; do bin="$ndk_root/toolchains/llvm/prebuilt/$host/bin"; if [ -x "$bin/clang" ] || [ -x "$bin/clang++" ]; then PATH="$bin:$PATH"; ANDROID_NDK_HOME="$ndk_root"; ANDROID_NDK_ROOT="$ndk_root"; NDK_HOME="$ndk_root"; break; fi; done; [ -n "${ANDROID_NDK_HOME:-}" ] && break; done
+  export PATH ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME CMAKE_HOME
+}
+sw_refresh_path
+ndk_status() {
+  sw_refresh_path
+  if [ -x "$CMAKE_DIR/3.22.1/bin/cmake" ]; then "$CMAKE_DIR/3.22.1/bin/cmake" --version 2>/dev/null | head -1; else echo 'CMake 3.22.1: not installed'; fi
+  found=0; for d in "$NDK_DIR"/*/; do [ -f "$d/build/cmake/android.toolchain.cmake" ] || continue; echo "NDK: $(basename "$d")"; found=1; done; [ "$found" -eq 1 ] || echo 'NDK: not installed'
+  command -v ninja >/dev/null 2>&1 && echo "Ninja: $(ninja --version 2>/dev/null)" || echo 'Ninja: not installed'
+}
+ndk_install() {
+  if [ -z "$1" ]; then echo 'Usage: ndk_install <https://ndk-archive.zip>'; return 2; fi
+  case "$1" in https://*|http://*) ;; *) echo 'Use an http:// or https:// archive URL.'; return 2 ;; esac
+  command -v am >/dev/null 2>&1 || { echo 'Android Activity Manager (am) is unavailable in PATH.'; return 127; }
+  result=$(am broadcast -a mod.sketchlibx.terminal.ACTION_INSTALL_NDK -n "$SW_PACKAGE/mod.sketchlibx.terminal.NdkInstallReceiver" --es ndk_url "$1" 2>&1); rc=$?; printf '%s\\n' "$result"
+  [ "$rc" -eq 0 ] || { echo 'Could not send the install request.'; return "$rc"; }
+  echo 'Request sent. Installation runs in the background; use ndk_status to check the result.'
+}
+sw_call() {
+  sw_c_cmd=$1; sw_c_max=$2; shift 2
+  command -v am >/dev/null 2>&1 || { echo 'Android Activity Manager (am) is unavailable in PATH.'; return 127; }
+  [ -d "$SW_IPC" ] || { echo 'The terminal request directory is unavailable.'; return 1; }
+  SW_SEQ=$((${SW_SEQ:-0}+1))
+  sw_c_id="$$-$(date +%s)-$SW_SEQ"
+  sw_c_out="$SW_IPC/$sw_c_id.out"; sw_c_rc="$SW_IPC/$sw_c_id.rc"
+  rm -f "$sw_c_out" "$sw_c_rc"
+  sw_c_res=$(am broadcast -a @ACTION@ -n "$SW_PACKAGE/mod.sketchlibx.terminal.TerminalCommandReceiver" --es command "$sw_c_cmd" --es request_id "$sw_c_id" --es sc_id "$SW_PROJECT_ID" "$@" 2>&1); sw_c_status=$?
+  if [ "$sw_c_status" -ne 0 ]; then printf '%s\\n' "$sw_c_res"; echo 'Could not send the request to Sketchware Neo.'; return "$sw_c_status"; fi
+  sw_c_shown=0; sw_c_tick=0; sw_c_stop=0; sw_c_seen=0; sw_c_cancelsent=0
+  trap 'sw_c_stop=1' INT
+  while :; do
+    if [ -f "$sw_c_out" ] || [ -f "$sw_c_rc" ]; then sw_c_seen=1; fi
+    if [ -f "$sw_c_out" ]; then
+      sw_c_lines=$(wc -l < "$sw_c_out" 2>/dev/null); sw_c_lines=$((${sw_c_lines:-0}+0))
+      if [ "$sw_c_lines" -gt "$sw_c_shown" ]; then sed -n "$((sw_c_shown+1)),${sw_c_lines}p" "$sw_c_out"; sw_c_shown=$sw_c_lines; fi
+    fi
+    [ -f "$sw_c_rc" ] && break
+    if [ "$sw_c_stop" -eq 1 ]; then
+      if [ "$sw_c_cmd" = "@BUILD@" ] && [ "$sw_c_cancelsent" -eq 0 ]; then
+        sw_c_cancelsent=1; sw_c_stop=0; echo 'Cancel requested. Waiting for the build to stop (Ctrl+C again to stop waiting)...'
+        am broadcast -a @ACTION@ -n "$SW_PACKAGE/mod.sketchlibx.terminal.TerminalCommandReceiver" --es command @CANCEL_BUILD@ --es request_id "cancel-$sw_c_id" --es sc_id "$SW_PROJECT_ID" >/dev/null 2>&1
+      else
+        trap - INT; echo 'Stopped waiting. The operation may still be running in Sketchware Neo.'; return 130
+      fi
+    fi
+    if [ "$sw_c_seen" -eq 0 ] && [ "$sw_c_tick" -ge 15 ]; then trap - INT; echo 'No response from Sketchware Neo. The request was not handled.'; return 1; fi
+    if [ "$sw_c_tick" -ge "$sw_c_max" ]; then trap - INT; echo "Stopped waiting after $sw_c_max seconds. The operation may still be running in Sketchware Neo."; return 1; fi
+    sleep 1; sw_c_tick=$((sw_c_tick+1))
+  done
+  sw_c_lines=$(wc -l < "$sw_c_out" 2>/dev/null); sw_c_lines=$((${sw_c_lines:-0}+0))
+  if [ "$sw_c_lines" -gt "$sw_c_shown" ]; then sed -n "$((sw_c_shown+1)),${sw_c_lines}p" "$sw_c_out"; fi
+  sw_c_status=$(cat "$sw_c_rc" 2>/dev/null)
+  case "$sw_c_status" in ''|*[!0-9]*) sw_c_status=1 ;; esac
+  rm -f "$sw_c_out" "$sw_c_rc"; trap - INT
+  return "$sw_c_status"
+}
+sw_confirm() {
+  printf '%s\\nType yes to continue: ' "$1"; IFS= read -r sw_answer
+  [ "$sw_answer" = yes ]
+}
+sw_build() { sw_call @BUILD@ 3600; }
+sw_clean_cache() {
+  sw_call @CLEAN_CACHE@ 120 --ez dry_run true; sw_rc=$?
+  [ "$sw_rc" -eq 10 ] || return "$sw_rc"
+  sw_confirm 'The build cache shown above will be deleted. Projects and sources are not touched.' || { echo 'Cancelled.'; return 1; }
+  sw_call @CLEAN_CACHE@ 900 --ez confirmed true
+}
+sw_clean_gradle_backups() {
+  sw_call @CLEAN_GRADLE@ 120 --ez dry_run true; sw_rc=$?
+  [ "$sw_rc" -eq 10 ] || return "$sw_rc"
+  sw_confirm 'The Gradle backups listed above will be deleted. The current Gradle files are not touched.' || { echo 'Cancelled.'; return 1; }
+  sw_call @CLEAN_GRADLE@ 120 --ez confirmed true
+}
+sw_help() {
+@HELP_LINES@}
+help() { sw_help; }
+sw_project() { echo 'Project directory:'; printf '%s\\n' "$SW_PROJECT_DIR"; echo 'Files:'; ls -la; }
+gradlew() {
+  if [ -f ./gradlew ]; then sh ./gradlew "$@"; return $?; fi
+  if command -v gradle >/dev/null 2>&1; then gradle "$@"; return $?; fi
+  echo 'No Gradle wrapper was found in this directory, and system Gradle is not installed.'
+  echo "Current directory: $PWD"
+  case "$PWD" in */.sketchware/data/*) echo 'This is a Sketchware app-project data directory, not a Gradle repository. Build the app with sw_build or the Run button.' ;; *) echo 'Change to a Gradle repository root containing gradlew and gradle/wrapper, then retry.' ;; esac
+  return 127
+}
+swdoctor() {
+  echo '--- Sketchware Neo Terminal diagnostics ---'; echo "Directory: $PWD"; echo "UID: $(id 2>/dev/null)"; echo "Android: $(getprop ro.build.version.release 2>/dev/null)"; echo
+  for c in sh ls cat grep find sed awk git gradle npm node pkg cmake ninja clang clang++ am; do command -v "$c" >/dev/null 2>&1 && printf '  [OK]   %s: %s\\n' "$c" "$(command -v "$c")" || printf '  [MISS] %s\\n' "$c"; done
+  if [ -f ./gradlew ]; then echo 'Gradle wrapper: present in current directory'; else echo 'Gradle wrapper: not present in current directory'; fi
+  ndk_status
+}
+alias ll='ls -la'
+echo 'Type help to list the available commands.'
+ndk_status
+echo
+""";
 }

@@ -28,9 +28,9 @@ import com.google.android.material.textfield.TextInputLayout;
 import java.io.File;
 import java.util.List;
 
-import dev.pranav.filepicker.FilePickerCallback;
-import dev.pranav.filepicker.FilePickerDialogFragment;
-import dev.pranav.filepicker.FilePickerOptions;
+import dev.sketchlibx.filepicker.FilePickerCallback;
+import dev.sketchlibx.filepicker.FilePickerDialogFragment;
+import dev.sketchlibx.filepicker.FilePickerOptions;
 import neo.sketchware.plugin.PluginManager;
 import pro.sketchware.R;
 import pro.sketchware.utility.SketchwareUtil;

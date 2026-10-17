@@ -22,7 +22,6 @@
         android:allowBackup="true"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:largeHeap="true"
         android:requestLegacyExternalStorage="true"
@@ -331,14 +330,12 @@
             android:name="mod.sketchlibx.project.history.CodeComparisonActivity"
             android:configChanges="orientation|screenSize" />
             
-        <activity
-            android:name="mod.sketchlibx.terminal.TerminalActivity"
-            android:configChanges="orientation|screenSize"
-            android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.SketchwarePro" />
-
         <receiver
             android:name="mod.sketchlibx.terminal.NdkInstallReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="mod.sketchlibx.terminal.TerminalCommandReceiver"
             android:exported="false" />
 
         <activity

@@ -19,12 +19,12 @@ import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.widget.PopupMenu;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
@@ -287,31 +287,41 @@ public class NeoTerminalView extends LinearLayout {
 
     private void showOutputMenu(View anchor) {
         PopupMenu menu = new PopupMenu(getContext(), anchor);
-        menu.getMenu().add("Clear screen");
-        menu.getMenu().add("Command help");
-        menu.getMenu().add("Run terminal diagnostics");
-        menu.getMenu().add("Recent commands");
+        menu.setForceShowIcon(true);
+        menu.getMenu().add(0, 1, 0, "Clear screen").setIcon(R.drawable.ic_mtrl_clear_all);
+        menu.getMenu().add(0, 2, 1, "Command help").setIcon(R.drawable.ic_mtrl_help);
+        menu.getMenu().add(0, 3, 2, "Run terminal diagnostics").setIcon(R.drawable.ic_mtrl_info);
+        menu.getMenu().add(0, 4, 3, "Recent commands").setIcon(R.drawable.ic_mtrl_history);
         menu.setOnMenuItemClickListener(item -> {
-            CharSequence title = item.getTitle();
-            if ("Clear screen".contentEquals(title)) {
-                sendShellCommand("clear");
-                return true;
+            switch (item.getItemId()) {
+                case 1:
+                    clearScreen();
+                    return true;
+                case 2:
+                    sendShellCommand("sw_help");
+                    return true;
+                case 3:
+                    sendShellCommand("swdoctor");
+                    return true;
+                case 4:
+                    showCommandHistory();
+                    return true;
+                default:
+                    return false;
             }
-            if ("Command help".contentEquals(title)) {
-                sendShellCommand("sw_help");
-                return true;
-            }
-            if ("Run terminal diagnostics".contentEquals(title)) {
-                sendShellCommand("swdoctor");
-                return true;
-            }
-            if ("Recent commands".contentEquals(title)) {
-                showCommandHistory();
-                return true;
-            }
-            return false;
         });
         menu.show();
+    }
+
+    private void clearScreen() {
+        TerminalSession session = activeEntry == null ? null : activeEntry.session;
+        if (session == null || session.getEmulator() == null) {
+            toast("No active session to clear");
+            return;
+        }
+        byte[] sequence = "\033[H\033[2J\033[3J".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        session.getEmulator().append(sequence, sequence.length);
+        terminalView.onScreenUpdated();
     }
 
     private void renameActiveSession() {
@@ -745,5 +755,6 @@ public class NeoTerminalView extends LinearLayout {
 
     public void destroy() {
         resetModifiers();
+        commandHistory.clear();
     }
 }
