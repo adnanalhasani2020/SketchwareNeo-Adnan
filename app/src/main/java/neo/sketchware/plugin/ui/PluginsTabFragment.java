@@ -2,6 +2,8 @@ package neo.sketchware.plugin.ui;
 
 import android.content.Context;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -22,11 +24,15 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
 import com.google.android.material.snackbar.Snackbar;
+import com.google.android.material.progressindicator.CircularProgressIndicator;
+import androidx.appcompat.app.AlertDialog;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
 import java.io.File;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import dev.sketchlibx.filepicker.FilePickerCallback;
 import dev.sketchlibx.filepicker.FilePickerDialogFragment;
@@ -50,6 +56,9 @@ public class PluginsTabFragment extends Fragment {
     private TextView emptyStateText;
     private LinearLayout searchContainer;
     private TextInputEditText searchField;
+    private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
+    private AlertDialog installProgressDialog;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Nullable
     @Override
@@ -205,8 +214,8 @@ public class PluginsTabFragment extends Fragment {
 
     private void openPluginPicker() {
         FilePickerOptions options = new FilePickerOptions();
-        options.setExtensions(new String[]{"jar"});
-        options.setTitle("Select Plugin (.jar)");
+        options.setExtensions(new String[]{"jar", "apk"});
+        options.setTitle("Select Plugin (.jar / .apk)");
 
         FilePickerCallback callback = new FilePickerCallback() {
             @Override
@@ -219,19 +228,68 @@ public class PluginsTabFragment extends Fragment {
     }
 
     private void installPlugin(File file) {
-        if (!isAdded()) return;
-        PluginManager.PluginInstallResult result = PluginManager.installAndLoad(requireContext(), file);
+        if (!isAdded() || file == null) return;
+        showInstallProgress();
+        Context appContext = requireContext().getApplicationContext();
+        installExecutor.execute(() -> {
+            PluginManager.PluginInstallResult result = PluginManager.installAndLoad(appContext, file);
+            mainHandler.post(() -> {
+                dismissInstallProgress();
+                if (!isAdded() || recyclerView == null) return;
+                if (result.success()) {
+                    refresh();
+                    Snackbar.make(recyclerView, "Plugin \"" + result.pluginId() + "\" installed", Snackbar.LENGTH_LONG).show();
+                } else {
+                    new MaterialAlertDialogBuilder(requireContext())
+                            .setTitle("Plugin installation failed")
+                            .setMessage(result.error() == null ? "Unknown plugin error" : result.error())
+                            .setPositiveButton("OK", null)
+                            .show();
+                }
+            });
+        });
+    }
 
-        if (result.success()) {
-            Snackbar.make(recyclerView, "Plugin \"" + result.pluginId() + "\" installed and loaded", Snackbar.LENGTH_LONG).show();
-            refresh();
-        } else {
-            new MaterialAlertDialogBuilder(requireContext())
-                    .setTitle("Plugin Failed to Load")
-                    .setMessage(result.error())
-                    .setPositiveButton("OK", null)
-                    .show();
+    private void showInstallProgress() {
+        if (!isAdded()) return;
+        LinearLayout row = new LinearLayout(requireContext());
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = SketchwareUtil.dpToPx(20);
+        row.setPadding(pad, pad, pad, pad);
+        CircularProgressIndicator indicator = new CircularProgressIndicator(requireContext());
+        row.addView(indicator, new LinearLayout.LayoutParams(SketchwareUtil.dpToPx(32), SketchwareUtil.dpToPx(32)));
+        TextView message = new TextView(requireContext());
+        message.setText("Validating and installing plugin…");
+        message.setPadding(SketchwareUtil.dpToPx(16), 0, 0, 0);
+        row.addView(message, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        installProgressDialog = new MaterialAlertDialogBuilder(requireContext()).setTitle("Install plugin").setView(row).setCancelable(false).create();
+        installProgressDialog.show();
+    }
+
+    private void dismissInstallProgress() {
+        if (installProgressDialog != null) {
+            installProgressDialog.dismiss();
+            installProgressDialog = null;
         }
+    }
+
+    @Override
+    public void onDestroyView() {
+        dismissInstallProgress();
+        recyclerView = null;
+        emptyStateContainer = null;
+        emptyStateText = null;
+        searchContainer = null;
+        searchField = null;
+        super.onDestroyView();
+    }
+
+    @Override
+    public void onDestroy() {
+        installExecutor.shutdownNow();
+        mainHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void confirmDelete(PluginManager.PluginInfo info) {

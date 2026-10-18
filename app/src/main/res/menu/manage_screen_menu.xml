@@ -2,21 +2,33 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
+        android:id="@+id/menu_screen_import_package"
+        android:icon="@drawable/ic_mtrl_download"
+        android:orderInCategory="1"
+        android:title="Import screen package"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/menu_screen_export_package"
+        android:icon="@drawable/ic_mtrl_upload"
+        android:orderInCategory="2"
+        android:title="Export screen"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/menu_screen_clone"
         android:icon="@drawable/ic_mtrl_copy"
-        android:orderInCategory="1"
+        android:orderInCategory="3"
         android:title="Clone screen"
         app:showAsAction="never" />
     <item
         android:id="@+id/menu_screen_edit"
         android:icon="@drawable/ic_mtrl_edit"
-        android:orderInCategory="2"
+        android:orderInCategory="4"
         android:title="Edit screen settings"
         app:showAsAction="never" />
     <item
         android:id="@+id/menu_screen_delete"
         android:icon="@drawable/ic_mtrl_delete"
-        android:orderInCategory="3"
+        android:orderInCategory="5"
         android:title="@string/common_word_delete"
         app:showAsAction="always" />
 </menu>

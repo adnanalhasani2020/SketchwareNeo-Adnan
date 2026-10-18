@@ -59,6 +59,10 @@ public final class NeoPluginContext {
     }
 
     public List<NeoEditorAction> getEditorActions() {
-        return editorActions;
+        return Collections.unmodifiableList(new CopyOnWriteArrayList<>(editorActions));
+    }
+
+    void clearEditorActions() {
+        editorActions.clear();
     }
 }

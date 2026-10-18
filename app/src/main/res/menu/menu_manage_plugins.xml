@@ -9,6 +9,12 @@
         app:showAsAction="always" />
 
     <item
+        android:id="@+id/action_browse_marketplace"
+        android:title="Browse Marketplace"
+        android:icon="@drawable/ic_mtrl_plugin"
+        app:showAsAction="ifRoom" />
+
+    <item
         android:id="@+id/action_view_diagnostics"
         android:title="View load log"
         app:showAsAction="never" />

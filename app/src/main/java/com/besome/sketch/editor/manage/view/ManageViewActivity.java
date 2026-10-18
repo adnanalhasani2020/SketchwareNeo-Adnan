@@ -48,6 +48,7 @@ public class ManageViewActivity extends BaseAppCompatActivity implements OnClick
     private static final int REQUEST_CODE_ADD_ACTIVITY = 264;
     private static final int REQUEST_CODE_ADD_CUSTOM_VIEW = 266;
     private static final int REQUEST_CODE_CLONE_SCREEN = 268;
+    private static final int REQUEST_CODE_SCREEN_PACKAGE_IMPORT = 269;
     private final int[] x = new int[19];
     // signature mustn't be changed: used in La/a/a/Bw;->a(Landroidx/recyclerview/widget/RecyclerView;II)V, La/a/a/tw;->a(Landroidx/recyclerview/widget/RecyclerView;II)V
     public FloatingActionButton s;
@@ -206,7 +207,7 @@ public class ManageViewActivity extends BaseAppCompatActivity implements OnClick
                     activitiesFragment.g();
                 }
             }
-        } else if (requestCode == REQUEST_CODE_CLONE_SCREEN) {
+        } else if (requestCode == REQUEST_CODE_CLONE_SCREEN || requestCode == REQUEST_CODE_SCREEN_PACKAGE_IMPORT) {
             if (resultCode == RESULT_OK) {
                 if (activitiesFragment != null) activitiesFragment.g();
                 if (customViewsFragment != null) customViewsFragment.g();
@@ -331,6 +332,8 @@ public class ManageViewActivity extends BaseAppCompatActivity implements OnClick
         menu.findItem(R.id.menu_screen_delete).setVisible(!selecting);
         menu.findItem(R.id.menu_screen_clone).setVisible(!selecting);
         menu.findItem(R.id.menu_screen_edit).setVisible(!selecting);
+        menu.findItem(R.id.menu_screen_import_package).setVisible(!selecting);
+        menu.findItem(R.id.menu_screen_export_package).setVisible(!selecting);
         return true;
     }
 
@@ -342,6 +345,22 @@ public class ManageViewActivity extends BaseAppCompatActivity implements OnClick
         }
         if (menuItem.getItemId() == R.id.menu_screen_edit) {
             if (!selecting) showEditScreenPicker();
+            return true;
+        }
+        if (menuItem.getItemId() == R.id.menu_screen_import_package) {
+            if (!selecting) {
+                Intent intent = new Intent(this, ScreenPackageImportActivity.class);
+                intent.putExtra(ScreenPackageImportActivity.EXTRA_TARGET_PROJECT_ID, sc_id);
+                startActivityForResult(intent, REQUEST_CODE_SCREEN_PACKAGE_IMPORT);
+            }
+            return true;
+        }
+        if (menuItem.getItemId() == R.id.menu_screen_export_package) {
+            if (!selecting) {
+                Intent intent = new Intent(this, ScreenPackageExportActivity.class);
+                intent.putExtra("sc_id", sc_id);
+                startActivity(intent);
+            }
             return true;
         }
         if (menuItem.getItemId() == R.id.menu_screen_clone) {

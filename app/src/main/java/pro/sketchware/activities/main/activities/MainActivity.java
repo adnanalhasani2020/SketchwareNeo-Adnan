@@ -49,6 +49,7 @@ import mod.tyron.backup.SingleCopyTask;
 import pro.sketchware.R;
 import pro.sketchware.activities.main.fragments.projects.ProjectsFragment;
 import pro.sketchware.activities.main.fragments.projects_store.ProjectsStoreFragment;
+import pro.sketchware.activities.main.fragments.templates.TemplatesFragment;
 import pro.sketchware.databinding.MainBinding;
 import pro.sketchware.utility.DataResetter;
 import pro.sketchware.utility.FileUtil;
@@ -59,6 +60,7 @@ import com.besome.sketch.MainDrawer;
 public class MainActivity extends BasePermissionAppCompatActivity {
     private static final String PROJECTS_FRAGMENT_TAG = "projects_fragment";
     private static final String PROJECTS_STORE_FRAGMENT_TAG = "projects_store_fragment";
+    private static final String TEMPLATES_FRAGMENT_TAG = "templates_fragment";
     private ActionBarDrawerToggle drawerToggle;
     private DB u;
     private Snackbar storageAccessDenied;
@@ -73,6 +75,7 @@ public class MainActivity extends BasePermissionAppCompatActivity {
     };
     private ProjectsFragment projectsFragment;
     private ProjectsStoreFragment projectsStoreFragment;
+    private TemplatesFragment templatesFragment;
     private Fragment activeFragment;
     @IdRes
     private int currentNavItemId = R.id.item_projects;
@@ -261,8 +264,8 @@ public class MainActivity extends BasePermissionAppCompatActivity {
                 navigateToSketchubFragment();
                 return true;
             } else if (id == R.id.item_templates) {
-                SketchwareUtil.toast("Templates: Coming soon");
-                return false; 
+                navigateToTemplatesFragment();
+                return true;
             }
             return false;
         });
@@ -270,6 +273,7 @@ public class MainActivity extends BasePermissionAppCompatActivity {
         if (savedInstanceState != null) {
             projectsFragment = (ProjectsFragment) getSupportFragmentManager().findFragmentByTag(PROJECTS_FRAGMENT_TAG);
             projectsStoreFragment = (ProjectsStoreFragment) getSupportFragmentManager().findFragmentByTag(PROJECTS_STORE_FRAGMENT_TAG);
+            templatesFragment = (TemplatesFragment) getSupportFragmentManager().findFragmentByTag(TEMPLATES_FRAGMENT_TAG);
             currentNavItemId = savedInstanceState.getInt("selected_tab_id");
             Fragment current = getFragmentForNavId(currentNavItemId);
             if (current instanceof ProjectsFragment) {
@@ -277,6 +281,8 @@ public class MainActivity extends BasePermissionAppCompatActivity {
                 if (projectsFragment != null) projectsFragment.refreshProjectsList();
             } else if (current instanceof ProjectsStoreFragment) {
                 navigateToSketchubFragment();
+            } else if (current instanceof TemplatesFragment) {
+                navigateToTemplatesFragment();
             }
             return;
         }
@@ -287,6 +293,7 @@ public class MainActivity extends BasePermissionAppCompatActivity {
     private Fragment getFragmentForNavId(int navItemId) {
         if (navItemId == R.id.item_projects) return projectsFragment;
         if (navItemId == R.id.item_sketchub) return projectsStoreFragment;
+        if (navItemId == R.id.item_templates) return templatesFragment;
         throw new IllegalArgumentException();
     }
 
@@ -330,6 +337,19 @@ public class MainActivity extends BasePermissionAppCompatActivity {
 
         activeFragment = projectsStoreFragment;
         currentNavItemId = R.id.item_sketchub;
+    }
+
+    private void navigateToTemplatesFragment() {
+        if (templatesFragment == null) templatesFragment = new TemplatesFragment();
+        FragmentManager fm = getSupportFragmentManager();
+        FragmentTransaction transaction = fm.beginTransaction();
+        if (activeFragment != null) transaction.hide(activeFragment);
+        boolean shouldShow = fm.findFragmentByTag(TEMPLATES_FRAGMENT_TAG) != null;
+        if (!shouldShow) transaction.add(binding.container.getId(), templatesFragment, TEMPLATES_FRAGMENT_TAG);
+        else transaction.show(templatesFragment);
+        transaction.commit();
+        activeFragment = templatesFragment;
+        currentNavItemId = R.id.item_templates;
     }
 
     @Override

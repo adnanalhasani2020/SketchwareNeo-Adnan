@@ -1,5 +1,6 @@
 package neo.sketchware.plugin.ui;
 
+import android.content.Intent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,8 +34,10 @@ public class PluginListAdapter extends RecyclerView.Adapter<PluginListAdapter.Vi
     private final OnToggleListener toggleListener;
 
     public PluginListAdapter(List<PluginManager.PluginInfo> items, OnDeleteClickListener deleteClickListener, OnToggleListener toggleListener) {
-        this.allItems.addAll(items);
-        this.visibleItems.addAll(items);
+        if (items != null) {
+            this.allItems.addAll(items);
+            this.visibleItems.addAll(items);
+        }
         this.deleteClickListener = deleteClickListener;
         this.toggleListener = toggleListener;
     }
@@ -54,9 +57,8 @@ public class PluginListAdapter extends RecyclerView.Adapter<PluginListAdapter.Vi
         } else {
             String lower = query.trim().toLowerCase(Locale.ROOT);
             for (PluginManager.PluginInfo info : allItems) {
-                if (info.pluginId().toLowerCase(Locale.ROOT).contains(lower)) {
-                    visibleItems.add(info);
-                }
+                String searchable = (info.pluginId() + " " + info.name() + " " + info.developer() + " " + info.category()).toLowerCase(Locale.ROOT);
+                if (searchable.contains(lower)) visibleItems.add(info);
             }
         }
         notifyDataSetChanged();
@@ -77,8 +79,10 @@ public class PluginListAdapter extends RecyclerView.Adapter<PluginListAdapter.Vi
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         PluginManager.PluginInfo info = visibleItems.get(position);
-        holder.name.setText(info.pluginId());
-        holder.meta.setText((info.enabled() ? "Active" : "Disabled") + " · API v" + info.apiVersion() + " · " + info.fileName());
+        holder.name.setText(info.name() == null || info.name().isBlank() ? info.pluginId() : info.name());
+        String status = !info.enabled() ? "Disabled" : info.loaded() ? "Active" : "Enabled · not loaded";
+        String version = info.version() == null || info.version().isBlank() ? "" : " · v" + info.version();
+        holder.meta.setText(status + version + " · API v" + info.apiVersion() + " · " + info.fileName());
 
         holder.enabledSwitch.setOnCheckedChangeListener(null);
         holder.enabledSwitch.setChecked(info.enabled());
@@ -88,6 +92,11 @@ public class PluginListAdapter extends RecyclerView.Adapter<PluginListAdapter.Vi
 
         holder.deleteButton.setOnClickListener(v -> {
             if (deleteClickListener != null) deleteClickListener.onDeleteClick(info);
+        });
+        holder.itemView.setOnClickListener(v -> {
+            android.content.Intent intent = new Intent(v.getContext(), PluginDetailsActivity.class);
+            intent.putExtra(PluginDetailsActivity.EXTRA_PLUGIN_ID, info.pluginId());
+            v.getContext().startActivity(intent);
         });
     }
 

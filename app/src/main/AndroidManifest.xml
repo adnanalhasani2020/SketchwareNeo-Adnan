@@ -29,6 +29,22 @@
         android:usesCleartextTraffic="true"
         tools:targetApi="p">
         <activity
+            android:name="com.besome.sketch.editor.manage.view.ScreenPackageImportActivity"
+            android:exported="false"
+            android:label="Import screen package"
+            android:theme="@style/Theme.SketchwarePro" />
+        <activity
+            android:name="com.besome.sketch.editor.manage.view.ScreenPackageExportActivity"
+            android:exported="false"
+            android:label="Export screen"
+            android:theme="@style/Theme.SketchwarePro" />
+        <activity
+            android:name="pro.sketchware.activities.main.fragments.templates.TemplateDetailsActivity"
+            android:exported="false"
+            android:label="Template details"
+            android:theme="@style/Theme.SketchwarePro" />
+
+        <activity
             android:name=".activities.importer.AndroidStudioImportActivity"
             android:exported="false"
             android:label="Import Android Studio Project"
@@ -381,7 +397,18 @@
             android:configChanges="orientation|screenSize" />
             
         <activity
+            android:name="neo.sketchware.plugin.ui.InstalledPluginsActivity"
+            android:exported="false"
+            android:label="Installed Plugins"
+            android:theme="@style/Theme.SketchwarePro" />
+        <activity
             android:name="neo.sketchware.plugin.ui.ManagePluginsActivity"
+            android:configChanges="orientation|screenSize" />
+        <activity
+            android:name="neo.sketchware.plugin.ui.PluginMarketplaceActivity"
+            android:configChanges="orientation|screenSize" />
+        <activity
+            android:name="neo.sketchware.plugin.ui.PluginDetailsActivity"
             android:configChanges="orientation|screenSize" />
         <activity
             android:name="neo.sketchware.ai.AiSettingsActivity"
