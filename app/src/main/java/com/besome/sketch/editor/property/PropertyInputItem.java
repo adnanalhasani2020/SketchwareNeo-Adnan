@@ -873,6 +873,9 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
                 attrs.add("app:icon");
                 attrs.add("app:iconTint");
                 attrs.add("app:iconGravity");
+                attrs.add("app:iconSize");
+                attrs.add("app:iconPadding");
+                attrs.add("app:iconTintMode");
             } else if (classInfo.b("ImageView") || classInfo.b("CircleImageView")) {
                 attrs.add("app:tint");
                 if (classInfo.b("CircleImageView")) {

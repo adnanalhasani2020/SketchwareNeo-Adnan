@@ -345,14 +345,6 @@
         <activity
             android:name="mod.sketchlibx.project.history.CodeComparisonActivity"
             android:configChanges="orientation|screenSize" />
-            
-        <receiver
-            android:name="mod.sketchlibx.terminal.NdkInstallReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name="mod.sketchlibx.terminal.TerminalCommandReceiver"
-            android:exported="false" />
 
         <activity
             android:name="pro.sketchware.analysis.ui.ProjectInspectorActivity" />

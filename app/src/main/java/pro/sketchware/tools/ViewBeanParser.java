@@ -62,8 +62,12 @@ public class ViewBeanParser {
 
     public static String generateUniqueId(Set<String> ids, int type, String className) {
         String prefix;
-        if (type == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT || type >= 49) {
+        if (type == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT) {
             prefix = "constraintLayout";
+        } else if (type >= 49) {
+            // Reserved/custom view types must not inherit ConstraintLayout IDs.
+            // Use the XML class name to keep generated IDs stable and readable.
+            prefix = getSnakeCaseId(className == null || className.isEmpty() ? "view" : className);
         } else {
             prefix = wq.b(type);
         }

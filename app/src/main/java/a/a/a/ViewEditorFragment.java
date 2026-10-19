@@ -24,6 +24,7 @@ import com.besome.sketch.editor.view.DraggingListener;
 import com.besome.sketch.editor.view.ViewEditor;
 import com.besome.sketch.editor.view.ViewProperty;
 import com.besome.sketch.editor.view.palette.PaletteWidget;
+import com.besome.sketch.editor.manage.library.material3.Material3LibraryManager;
 
 import java.util.ArrayList;
 
@@ -248,7 +249,6 @@ public class ViewEditorFragment extends qA {
         viewEditor.extraWidget("", "AutoCompleteTextView", "AutoCompleteTextView");
         viewEditor.extraWidget("", "MultiAutoCompleteTextView", "MultiAutoCompleteTextView");
         viewEditor.addWidget(PaletteWidget.b.a, "", "Button", "Button");
-        viewEditor.extraWidget("", "MaterialButton", "MaterialButton");
         viewEditor.addWidget(PaletteWidget.b.d, "", "ImageView", "default_image");
         viewEditor.extraWidget("", "CircleImageView", "default_image");
         viewEditor.addWidget(PaletteWidget.b.g, "", "CheckBox", "CheckBox");
@@ -292,6 +292,17 @@ public class ViewEditorFragment extends qA {
         viewEditor.extraWidget("", "DatePicker", "DatePicker");
         viewEditor.addWidget(PaletteWidget.b.k, "", "CalendarView", "CalendarView");
         widgetsCreatorManager.addWidgetsByTitle("Date & Time");
+
+        // Material widgets are intentionally hidden unless Material 3 is enabled
+        // for this project. This avoids adding classes whose dependency/theme is absent.
+        if (sc_id != null && new Material3LibraryManager(sc_id).isMaterial3Enabled()) {
+            viewEditor.paletteWidget.extraTitle("Material 3", 1);
+            viewEditor.extraWidget("", "MaterialButton", "MaterialButton");
+            viewEditor.extraWidget("", "TextInputEditText", "TextInputEditText");
+            viewEditor.extraWidget("", "MaterialSwitch", "MaterialSwitch");
+            viewEditor.extraWidget("", "CircularProgressIndicator", "CircularProgressIndicator");
+            viewEditor.extraWidget("", "LinearProgressIndicator", "LinearProgressIndicator");
+        }
         widgetsCreatorManager.addExtraClasses();
     }
 

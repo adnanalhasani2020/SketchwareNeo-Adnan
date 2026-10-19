@@ -40,10 +40,6 @@ import java.util.function.Consumer;
 import pro.sketchware.R;
 import pro.sketchware.utility.SketchwareUtil;
 
-/**
- * Sketchware Neo's interactive project terminal. It keeps a real PTY shell, independent
- * sessions per project, a command-entry shortcut for touch devices, and terminal-output tools.
- */
 public class NeoTerminalView extends LinearLayout {
 
     private static final int COLOR_BG = Color.parseColor("#121212");
@@ -86,8 +82,7 @@ public class NeoTerminalView extends LinearLayout {
 
         terminalView = new TerminalView(context, null);
         terminalView.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        // A slightly smaller monospace size exposes more columns on narrow phone screens. The
-        // Termux TerminalView still owns real terminal-cell wrapping and PTY resize handling.
+
         terminalView.setTextSize(spToPx(context, 12));
         terminalView.setTypeface(Typeface.MONOSPACE);
         terminalView.setBackgroundColor(COLOR_BG);

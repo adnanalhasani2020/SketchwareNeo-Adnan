@@ -6,6 +6,9 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
+import com.google.api.services.drive.model.About;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.FileContent;
@@ -18,11 +21,20 @@ import com.google.api.services.drive.model.FileList;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 public class CloudBackupManager {
 
@@ -74,6 +86,63 @@ public class CloudBackupManager {
         void onError(String error);
     }
 
+    public interface StorageCallback {
+        void onResult(long limit, long usage, long backupBytes, int backupCount);
+        void onError(String error);
+    }
+
+    public static final String PROP_NAME = "projectName";
+    public static final String PROP_PKG = "pkg";
+    public static final String PROP_VER_NAME = "verName";
+    public static final String PROP_VER_CODE = "verCode";
+
+    public static Map<String, String> readProjectMeta(java.io.File swbFile) {
+        Map<String, String> meta = new HashMap<>();
+        if (swbFile == null || !swbFile.isFile()) return meta;
+
+        try (ZipFile zip = new ZipFile(swbFile)) {
+            ZipEntry entry = zip.getEntry("project");
+            if (entry == null) return meta;
+
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            try (java.io.InputStream in = zip.getInputStream(entry)) {
+                byte[] chunk = new byte[4096];
+                int read;
+                while ((read = in.read(chunk)) != -1) buffer.write(chunk, 0, read);
+            }
+
+            byte[] key = "sketchwaresecure".getBytes();
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new IvParameterSpec(key));
+            String json = new String(cipher.doFinal(buffer.toByteArray())).trim();
+
+            Map<String, Object> map = new Gson().fromJson(json, new TypeToken<HashMap<String, Object>>() {}.getType());
+            if (map == null) return meta;
+
+            putMeta(meta, PROP_NAME, map.get("my_app_name"));
+            putMeta(meta, PROP_PKG, map.get("my_sc_pkg_name"));
+            putMeta(meta, PROP_VER_NAME, map.get("sc_ver_name"));
+            putMeta(meta, PROP_VER_CODE, map.get("sc_ver_code"));
+        } catch (Exception e) {
+            Log.w(TAG, "readProjectMeta failed for " + swbFile.getName() + ": " + e.getMessage());
+        }
+        return meta;
+    }
+
+    private static void putMeta(Map<String, String> meta, String key, Object value) {
+        if (value == null) return;
+        String text;
+        if (value instanceof Double && ((Double) value) == Math.rint((Double) value)) {
+            text = String.valueOf(((Double) value).longValue());
+        } else {
+            text = String.valueOf(value);
+        }
+        text = text.trim();
+        if (text.isEmpty()) return;
+        if (text.length() > 40) text = text.substring(0, 40);
+        meta.put(key, text);
+    }
+
     public void uploadBackupToCloud(
             final java.io.File swbFile,
             final String projectName,
@@ -107,10 +176,15 @@ public class CloudBackupManager {
                 int matchCount = result.getFiles() != null ? result.getFiles().size() : 0;
                 FileContent mediaContent = new FileContent("application/zip", swbFile);
 
+                Map<String, String> properties = readProjectMeta(swbFile);
+                String safeName = projectName == null ? "" : projectName.trim();
+                if (safeName.length() > 40) safeName = safeName.substring(0, 40);
+                if (!safeName.isEmpty()) properties.put(PROP_NAME, safeName);
+
                 if (matchCount > 0) {
                     String existingId = result.getFiles().get(0).getId();
                     File updateMeta = new File();
-                    updateMeta.setProperties(Collections.singletonMap("projectName", projectName));
+                    updateMeta.setProperties(properties);
 
                     File updated = driveService.files()
                             .update(existingId, updateMeta, mediaContent)
@@ -123,7 +197,7 @@ public class CloudBackupManager {
                     File fileMeta = new File();
                     fileMeta.setName(fileName);
                     fileMeta.setParents(Collections.singletonList(FOLDER_SPACE));
-                    fileMeta.setProperties(Collections.singletonMap("projectName", projectName));
+                    fileMeta.setProperties(properties);
 
                     File created = driveService.files()
                             .create(fileMeta, mediaContent)
@@ -151,12 +225,20 @@ public class CloudBackupManager {
 
         executor.execute(() -> {
             try {
-                FileList result = driveService.files().list()
-                        .setSpaces(FOLDER_SPACE)
-                        .setFields("files(id, name, createdTime, size, properties)")
-                        .execute();
+                List<File> all = new ArrayList<>();
+                String pageToken = null;
+                do {
+                    FileList result = driveService.files().list()
+                            .setSpaces(FOLDER_SPACE)
+                            .setPageSize(100)
+                            .setPageToken(pageToken)
+                            .setFields("nextPageToken, files(id, name, createdTime, modifiedTime, size, properties)")
+                            .execute();
+                    if (result.getFiles() != null) all.addAll(result.getFiles());
+                    pageToken = result.getNextPageToken();
+                } while (pageToken != null);
 
-                mainHandler.post(() -> callback.onSuccess(result.getFiles()));
+                mainHandler.post(() -> callback.onSuccess(all));
             } catch (Exception e) {
                 String diagnosis = diagnoseDriveError(e);
                 Log.e(TAG, "getCloudBackupsList FAILED | " + diagnosis, e);
@@ -177,23 +259,85 @@ public class CloudBackupManager {
         }
 
         executor.execute(() -> {
+            java.io.File partFile = null;
             try {
-                java.io.File destFile = new java.io.File(downloadPath, fileName);
-                if (!destFile.getParentFile().exists()) {
-                    destFile.getParentFile().mkdirs();
+                String safeFileName = new java.io.File(fileName).getName();
+                if (safeFileName.isEmpty()) safeFileName = fileId + ".swb";
+
+                java.io.File destDir = new java.io.File(downloadPath);
+                if (!destDir.exists() && !destDir.mkdirs() && !destDir.exists()) {
+                    throw new IOException("Cannot create download directory: " + destDir.getAbsolutePath());
                 }
 
-                OutputStream out = new FileOutputStream(destFile);
-                driveService.files().get(fileId).executeMediaAndDownloadTo(out);
-                out.flush();
-                out.close();
+                java.io.File destFile = new java.io.File(destDir, safeFileName);
+                partFile = new java.io.File(destDir, safeFileName + ".part");
+                if (partFile.exists()) partFile.delete();
+                if (destFile.exists()) destFile.delete();
 
-                postSuccess(callback, "Backup downloaded to " + destFile.getAbsolutePath());
+                try (OutputStream out = new FileOutputStream(partFile)) {
+                    driveService.files().get(fileId).executeMediaAndDownloadTo(out);
+                    out.flush();
+                }
+
+                if (partFile.length() <= 0) {
+                    throw new IOException("Downloaded file is empty");
+                }
+                if (!partFile.renameTo(destFile)) {
+                    throw new IOException("Cannot move downloaded file into place");
+                }
+
+                postSuccess(callback, destFile.getAbsolutePath());
 
             } catch (Exception e) {
+                if (partFile != null && partFile.exists()) partFile.delete();
                 String diagnosis = diagnoseDriveError(e);
                 Log.e(TAG, "downloadBackupFromCloud FAILED | " + diagnosis, e);
                 postError(callback, "Download failed [" + diagnosis + "]:\n" + Log.getStackTraceString(e));
+            }
+        });
+    }
+
+    public void getStorageInfo(final StorageCallback callback) {
+        if (driveService == null) {
+            mainHandler.post(() -> callback.onError("Drive service not available."));
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                About about = driveService.about().get().setFields("storageQuota").execute();
+                About.StorageQuota quota = about.getStorageQuota();
+                long limit = quota != null && quota.getLimit() != null ? quota.getLimit() : -1;
+                long usage = quota != null && quota.getUsage() != null ? quota.getUsage() : 0;
+
+                long backupBytes = 0;
+                int backupCount = 0;
+                String pageToken = null;
+                do {
+                    FileList result = driveService.files().list()
+                            .setSpaces(FOLDER_SPACE)
+                            .setPageSize(100)
+                            .setPageToken(pageToken)
+                            .setFields("nextPageToken, files(id, size)")
+                            .execute();
+                    if (result.getFiles() != null) {
+                        for (File f : result.getFiles()) {
+                            backupCount++;
+                            if (f.getSize() != null) backupBytes += f.getSize();
+                        }
+                    }
+                    pageToken = result.getNextPageToken();
+                } while (pageToken != null);
+
+                final long fLimit = limit;
+                final long fUsage = usage;
+                final long fBytes = backupBytes;
+                final int fCount = backupCount;
+                mainHandler.post(() -> callback.onResult(fLimit, fUsage, fBytes, fCount));
+            } catch (Exception e) {
+                String diagnosis = diagnoseDriveError(e);
+                Log.e(TAG, "getStorageInfo FAILED | " + diagnosis, e);
+                mainHandler.post(() -> callback.onError("Storage query failed [" + diagnosis + "]"));
             }
         });
     }

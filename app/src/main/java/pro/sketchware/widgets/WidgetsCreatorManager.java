@@ -62,7 +62,8 @@ public class WidgetsCreatorManager {
             "BottomNavigationView", "Button", "CardView", "CheckBox", "CodeView", "EditText", "GridView",
             "HScrollView", "ImageView", "LinearLayout", "ListView", "MapView", "MaterialButton", "ProgressBar",
             "RadioButton", "RecyclerView", "RelativeLayout", "ConstraintLayout", "ScrollView", "SeekBar", "Spinner", "Switch",
-            "SwipeRefreshLayout", "TabLayout", "TextInputLayout", "TextView", "VideoView", "ViewPager", "WebView"
+            "SwipeRefreshLayout", "TabLayout", "TextInputLayout", "TextInputEditText", "MaterialSwitch",
+            "CircularProgressIndicator", "LinearProgressIndicator", "TextView", "VideoView", "ViewPager", "WebView"
     );
     private final List<String> availableWidgetsTypes = new ArrayList<>();
     private final ViewEditor viewEditor;

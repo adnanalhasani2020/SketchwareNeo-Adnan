@@ -3,10 +3,6 @@ package mod.sketchlibx.terminal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Lets the terminal ask the open project editor to run its normal APK build without the terminal
- * depending on the editor classes.
- */
 public final class TerminalBuildBridge {
 
     public interface Listener {

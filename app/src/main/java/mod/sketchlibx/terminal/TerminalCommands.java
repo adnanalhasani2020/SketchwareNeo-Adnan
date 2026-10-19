@@ -2,20 +2,20 @@ package mod.sketchlibx.terminal;
 
 import java.util.List;
 
-/** Single source of truth for the helper commands the terminal advertises. */
 public final class TerminalCommands {
 
-    public static final String ACTION_COMMAND = "mod.sketchlibx.terminal.ACTION_COMMAND";
-    public static final String EXTRA_COMMAND = "command";
-    public static final String EXTRA_REQUEST_ID = "request_id";
-    public static final String EXTRA_SC_ID = "sc_id";
-    public static final String EXTRA_CONFIRMED = "confirmed";
-    public static final String EXTRA_DRY_RUN = "dry_run";
+    public static final String KEY_COMMAND = "command";
+    public static final String KEY_SC_ID = "sc_id";
+    public static final String KEY_CONFIRMED = "confirmed";
+    public static final String KEY_DRY_RUN = "dry_run";
+    public static final String KEY_URL = "url";
 
+    public static final String COMMAND_STATUS = "status";
     public static final String COMMAND_BUILD = "build";
     public static final String COMMAND_CANCEL_BUILD = "cancel-build";
     public static final String COMMAND_CLEAN_CACHE = "clean-cache";
     public static final String COMMAND_CLEAN_GRADLE_BACKUPS = "clean-gradle-backups";
+    public static final String COMMAND_NDK_INSTALL = "ndk-install";
 
     public static final int EXIT_NOT_AVAILABLE = 4;
     public static final int EXIT_BUSY = 5;
@@ -27,6 +27,10 @@ public final class TerminalCommands {
             "",
             "help, sw_help",
             "    Show this list.",
+            "",
+            "sw_status",
+            "    Check that this terminal can reach Sketchware Neo and show the project editor,",
+            "    build and directory state. Run this first if a command below reports an error.",
             "",
             "sw_build",
             "    Build a debug APK of this project with the same pipeline as the Run button.",
@@ -52,9 +56,8 @@ public final class TerminalCommands {
             "    Show the installed CMake, NDK and Ninja versions.",
             "",
             "ndk_install <url>",
-            "    Ask Sketchware Neo to install an NDK/CMake archive from an http(s) URL. The",
-            "    install runs in the background and its result is not reported here; run",
-            "    ndk_status afterwards to see whether it finished.",
+            "    Download and install an NDK/CMake archive from an http(s) URL. Progress and the",
+            "    final result are printed here; Ctrl+C stops waiting but the install continues.",
             "",
             "gradlew <tasks>",
             "    Run ./gradlew from the current directory, or system Gradle if installed.",

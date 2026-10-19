@@ -18,10 +18,6 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * The only deletions the terminal can perform. Both targets are resolved from a validated project
- * id, checked against their canonical location and never follow symbolic links.
- */
 public final class TerminalCleanup {
 
     public static final int CODE_OK = 0;

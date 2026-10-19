@@ -22,12 +22,6 @@ import com.termux.terminal.TerminalSessionClient;
 
 import mod.hey.studios.activity.managers.cpp.InbuiltNdkManager;
 
-/**
- * Owns real PTY {@link TerminalSession}s, multiple independent ones per project (sc_id) — each
- * "New Session" creates a genuinely separate subprocess with its own PTY, cwd and scrollback.
- * Sessions outlive any single UI surface: switching tabs, placements, or app recreation reattaches
- * to whichever sessions are still running rather than losing them.
- */
 public final class TerminalSessionManager {
 
     public static final class Entry {
@@ -60,14 +54,12 @@ public final class TerminalSessionManager {
         return sessions != null && !sessions.isEmpty();
     }
 
-    /** Stops every session of this project and discards its output and generated helper script. */
     public static synchronized void releaseProject(Context context, String scId) {
         String projectId = normalizeProjectId(scId);
         killAllSessions(projectId);
         deleteInitScript(context.getApplicationContext(), projectId);
     }
 
-    /** Releases sessions that belong to any project other than {@code activeScId}. */
     public static synchronized void releaseAllExcept(Context context, String activeScId) {
         String activeId = normalizeProjectId(activeScId);
         for (String projectId : new ArrayList<>(PROJECT_SESSIONS.keySet())) {
@@ -87,7 +79,6 @@ public final class TerminalSessionManager {
         return PROJECT_SESSIONS.computeIfAbsent(projectId, k -> new CopyOnWriteArrayList<>());
     }
 
-    /** Returns the first still-running session for this project, or creates one if none exist. */
     public static synchronized Entry getOrCreateFirst(Context context, String scId, TerminalSessionClient client) {
         String projectId = normalizeProjectId(scId);
         List<Entry> sessions = getSessions(projectId);
@@ -97,7 +88,7 @@ public final class TerminalSessionManager {
         return createSession(context, projectId, client);
     }
 
-    /** Always spawns a genuinely new, independent PTY — this is what "+" / "New Session" calls. */
+
     public static synchronized Entry createSession(Context context, String scId, TerminalSessionClient client) {
         String projectId = normalizeProjectId(scId);
         Context appContext = context.getApplicationContext();
@@ -105,17 +96,14 @@ public final class TerminalSessionManager {
         int number = PROJECT_COUNTERS.computeIfAbsent(projectId, k -> new AtomicInteger(0)).incrementAndGet();
         String sessionId = projectId + "#" + number;
 
-        // Prepare the shell startup file before the PTY starts. Sending the source command
-        // immediately after constructing TerminalSession races shell startup on some devices;
-        // that race left sw_help/swdoctor undefined even though the script existed.
         File initScript = writeInitScript(appContext, projectId);
         TerminalSession session = spawnSession(appContext, projectId, client, initScript);
         Entry entry = new Entry(sessionId, "Session " + number, session);
         sessions.add(entry);
+        TerminalCommandDispatcher.ensureStarted(appContext);
         return entry;
     }
 
-    /** Kills exactly one session; the project's other sessions are unaffected. */
     public static synchronized void killSession(String scId, String sessionId) {
         List<Entry> sessions = PROJECT_SESSIONS.get(normalizeProjectId(scId));
         if (sessions == null) return;
@@ -126,6 +114,18 @@ public final class TerminalSessionManager {
                 break;
             }
         }
+        stopCommandServerIfIdle();
+    }
+
+    private static boolean hasAnySession() {
+        for (List<Entry> list : PROJECT_SESSIONS.values()) {
+            if (!list.isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private static void stopCommandServerIfIdle() {
+        if (!hasAnySession()) TerminalCommandDispatcher.stop();
     }
 
     public static synchronized void killAllSessions(String scId) {
@@ -135,6 +135,7 @@ public final class TerminalSessionManager {
             for (Entry e : sessions) e.session.finishIfRunning();
         }
         PROJECT_COUNTERS.remove(projectId);
+        stopCommandServerIfIdle();
     }
 
     private static TerminalSession spawnSession(Context appContext, String scId, TerminalSessionClient client, File initScript) {
@@ -151,7 +152,6 @@ public final class TerminalSessionManager {
         return new TerminalSession(shellPath, homeDir, args, env, 4000, client);
     }
 
-    /** A real bash from an installed toolchain is used if present; otherwise the real system shell. */
     private static String resolveShell(List<String> binDirs) {
         for (String dir : binDirs) {
             File bash = new File(dir, "bash");
@@ -181,8 +181,7 @@ public final class TerminalSessionManager {
                 if (hostDirs == null) continue;
                 for (File hostDir : hostDirs) {
                     String host = hostDir.getName().toLowerCase(Locale.ROOT);
-                    // The installed AndroidIDE NDK uses linux-aarch64. Never expose desktop
-                    // x86_64 tool binaries to Android's shell PATH.
+
                     if (!(host.equals("linux-aarch64") || host.equals("linux-arm64")
                             || host.equals("android-arm64") || host.equals("android-aarch64"))) {
                         continue;
@@ -211,7 +210,7 @@ public final class TerminalSessionManager {
                 if (!entry.trim().isEmpty()) basePathEntries.add(entry.trim());
             }
         }
-        // Include Android platform locations even if the app process was launched with a sparse PATH.
+
         basePathEntries.add("/system/bin");
         basePathEntries.add("/system/xbin");
         basePathEntries.add("/vendor/bin");
@@ -229,14 +228,13 @@ public final class TerminalSessionManager {
         env.add("PWD=" + homeDir);
         env.add("SW_PROJECT_DIR=" + homeDir);
         env.add("SW_PROJECT_ID=" + scId);
-        env.add("SW_IPC=" + TerminalCommandReceiver.getIpcDirectory(appContext).getAbsolutePath());
+        env.add("SW_IPC=" + TerminalCommandDispatcher.getIpcDirectory(appContext).getAbsolutePath());
         env.add("TMPDIR=" + appContext.getCacheDir().getAbsolutePath());
         env.add("TERM=xterm-256color");
         env.add("COLORTERM=truecolor");
         env.add("LANG=en_US.UTF-8");
         env.add("PS1=\\W $ ");
-        // mksh sources ENV for interactive PTY shells, so helper functions are defined before
-        // the user can type. This avoids a startup race from writing a command into a new PTY.
+
         if (initScript != null && initScript.isFile()) env.add("ENV=" + initScript.getAbsolutePath());
         copyIfSet(env, "ANDROID_ROOT", "/system");
         copyIfSet(env, "ANDROID_DATA", "/data");
@@ -279,12 +277,8 @@ public final class TerminalSessionManager {
         return result;
     }
 
-    /**
-     * Installs the same helper set in every shell session. Every helper is either a thin wrapper
-     * around an installed tool or a request to the app (see {@link TerminalCommandReceiver}); none
-     * of them evaluates user input as shell code.
-     */
-    static String buildInitScript(String filesDir, String packageName, String projectId) {
+
+    static String buildInitScript(String filesDir, String projectId) {
         StringBuilder help = new StringBuilder();
         for (String line : TerminalCommands.HELP_LINES) {
             help.append("  printf '%s\\n' ").append(shellQuote(line)).append("\n");
@@ -292,22 +286,22 @@ public final class TerminalSessionManager {
         return SCRIPT_TEMPLATE
                 .replace("@NDK_DIR@", shellQuote(filesDir + "/ndk"))
                 .replace("@CMAKE_DIR@", shellQuote(filesDir + "/cmake"))
-                .replace("@PACKAGE@", shellQuote(packageName))
-                .replace("@ACTION@", TerminalCommands.ACTION_COMMAND)
                 .replace("@PROJECT_ID@", projectId)
                 .replace("@HELP_LINES@", help.toString())
                 .replace("@BUILD@", TerminalCommands.COMMAND_BUILD)
                 .replace("@CANCEL_BUILD@", TerminalCommands.COMMAND_CANCEL_BUILD)
                 .replace("@CLEAN_CACHE@", TerminalCommands.COMMAND_CLEAN_CACHE)
-                .replace("@CLEAN_GRADLE@", TerminalCommands.COMMAND_CLEAN_GRADLE_BACKUPS);
+                .replace("@CLEAN_GRADLE@", TerminalCommands.COMMAND_CLEAN_GRADLE_BACKUPS)
+                .replace("@NDK_INSTALL@", TerminalCommands.COMMAND_NDK_INSTALL)
+                .replace("@STATUS@", TerminalCommands.COMMAND_STATUS);
     }
 
     private static File writeInitScript(Context appContext, String projectId) {
-        String script = buildInitScript(appContext.getFilesDir().getAbsolutePath(), appContext.getPackageName(), projectId);
+        String script = buildInitScript(appContext.getFilesDir().getAbsolutePath(), projectId);
 
         File scriptsDir = new File(appContext.getFilesDir(), "terminal");
         File initFile = new File(scriptsDir, "session-init-" + projectId + ".sh");
-        File ipcDir = TerminalCommandReceiver.getIpcDirectory(appContext);
+        File ipcDir = TerminalCommandDispatcher.getIpcDirectory(appContext);
         try {
             if (!scriptsDir.isDirectory() && !scriptsDir.mkdirs() && !scriptsDir.isDirectory()) {
                 throw new IOException("Could not create terminal helper directory");
@@ -334,7 +328,6 @@ public final class TerminalSessionManager {
     private static final String SCRIPT_TEMPLATE = """
 NDK_DIR=@NDK_DIR@
 CMAKE_DIR=@CMAKE_DIR@
-SW_PACKAGE=@PACKAGE@
 clear
 printf '\\033[1;32m'; echo 'Sketchware Neo Terminal'; printf '\\033[0m'
 echo 'Project ID: @PROJECT_ID@'
@@ -355,21 +348,23 @@ ndk_status() {
 ndk_install() {
   if [ -z "$1" ]; then echo 'Usage: ndk_install <https://ndk-archive.zip>'; return 2; fi
   case "$1" in https://*|http://*) ;; *) echo 'Use an http:// or https:// archive URL.'; return 2 ;; esac
-  command -v am >/dev/null 2>&1 || { echo 'Android Activity Manager (am) is unavailable in PATH.'; return 127; }
-  result=$(am broadcast -a mod.sketchlibx.terminal.ACTION_INSTALL_NDK -n "$SW_PACKAGE/mod.sketchlibx.terminal.NdkInstallReceiver" --es ndk_url "$1" 2>&1); rc=$?; printf '%s\\n' "$result"
-  [ "$rc" -eq 0 ] || { echo 'Could not send the install request.'; return "$rc"; }
-  echo 'Request sent. Installation runs in the background; use ndk_status to check the result.'
+  case "$1" in *'
+'*) echo 'The URL must be a single line.'; return 2 ;; esac
+  sw_call @NDK_INSTALL@ 7200 "url=$1"
+}
+sw_send() {
+  sw_s_file="$SW_IPC/$1.req"
+  { printf 'command=%s\\n' "$2"; printf 'sc_id=%s\\n' "$SW_PROJECT_ID"; shift 2; for sw_s_arg in "$@"; do printf '%s\\n' "$sw_s_arg"; done; } > "$sw_s_file.tmp" 2>/dev/null && mv "$sw_s_file.tmp" "$sw_s_file" 2>/dev/null || { rm -f "$sw_s_file.tmp"; return 1; }
 }
 sw_call() {
   sw_c_cmd=$1; sw_c_max=$2; shift 2
-  command -v am >/dev/null 2>&1 || { echo 'Android Activity Manager (am) is unavailable in PATH.'; return 127; }
-  [ -d "$SW_IPC" ] || { echo 'The terminal request directory is unavailable.'; return 1; }
+  for sw_c_tool in mv rm sleep cat wc sed; do command -v "$sw_c_tool" >/dev/null 2>&1 || { echo "The required tool '$sw_c_tool' is missing from this shell."; return 127; }; done
+  if [ ! -d "$SW_IPC" ] || [ ! -w "$SW_IPC" ]; then echo 'The terminal request directory is missing or not writable.'; return 1; fi
   SW_SEQ=$((${SW_SEQ:-0}+1))
-  sw_c_id="$$-$(date +%s)-$SW_SEQ"
-  sw_c_out="$SW_IPC/$sw_c_id.out"; sw_c_rc="$SW_IPC/$sw_c_id.rc"
-  rm -f "$sw_c_out" "$sw_c_rc"
-  sw_c_res=$(am broadcast -a @ACTION@ -n "$SW_PACKAGE/mod.sketchlibx.terminal.TerminalCommandReceiver" --es command "$sw_c_cmd" --es request_id "$sw_c_id" --es sc_id "$SW_PROJECT_ID" "$@" 2>&1); sw_c_status=$?
-  if [ "$sw_c_status" -ne 0 ]; then printf '%s\\n' "$sw_c_res"; echo 'Could not send the request to Sketchware Neo.'; return "$sw_c_status"; fi
+  sw_c_id="$$-$SW_SEQ-${RANDOM:-0}"
+  sw_c_out="$SW_IPC/$sw_c_id.out"; sw_c_rc="$SW_IPC/$sw_c_id.rc"; sw_c_req="$SW_IPC/$sw_c_id.req"
+  rm -f "$sw_c_out" "$sw_c_rc" "$sw_c_req"
+  sw_send "$sw_c_id" "$sw_c_cmd" "$@" || { echo 'Could not write the request file.'; return 1; }
   sw_c_shown=0; sw_c_tick=0; sw_c_stop=0; sw_c_seen=0; sw_c_cancelsent=0
   trap 'sw_c_stop=1' INT
   while :; do
@@ -382,12 +377,16 @@ sw_call() {
     if [ "$sw_c_stop" -eq 1 ]; then
       if [ "$sw_c_cmd" = "@BUILD@" ] && [ "$sw_c_cancelsent" -eq 0 ]; then
         sw_c_cancelsent=1; sw_c_stop=0; echo 'Cancel requested. Waiting for the build to stop (Ctrl+C again to stop waiting)...'
-        am broadcast -a @ACTION@ -n "$SW_PACKAGE/mod.sketchlibx.terminal.TerminalCommandReceiver" --es command @CANCEL_BUILD@ --es request_id "cancel-$sw_c_id" --es sc_id "$SW_PROJECT_ID" >/dev/null 2>&1
+        sw_send "cancel-$sw_c_id" @CANCEL_BUILD@
       else
-        trap - INT; echo 'Stopped waiting. The operation may still be running in Sketchware Neo.'; return 130
+        trap - INT; rm -f "$sw_c_req"; echo 'Stopped waiting. The operation may still be running in Sketchware Neo.'; return 130
       fi
     fi
-    if [ "$sw_c_seen" -eq 0 ] && [ "$sw_c_tick" -ge 15 ]; then trap - INT; echo 'No response from Sketchware Neo. The request was not handled.'; return 1; fi
+    if [ "$sw_c_seen" -eq 0 ] && [ "$sw_c_tick" -ge 10 ]; then
+      trap - INT
+      if [ -f "$sw_c_req" ]; then rm -f "$sw_c_req"; echo 'Sketchware Neo did not pick up the request: the terminal service is not running. Reopen the Terminal tab and try again.'; else echo 'Sketchware Neo picked up the request but sent no answer.'; fi
+      return 1
+    fi
     if [ "$sw_c_tick" -ge "$sw_c_max" ]; then trap - INT; echo "Stopped waiting after $sw_c_max seconds. The operation may still be running in Sketchware Neo."; return 1; fi
     sleep 1; sw_c_tick=$((sw_c_tick+1))
   done
@@ -402,18 +401,19 @@ sw_confirm() {
   printf '%s\\nType yes to continue: ' "$1"; IFS= read -r sw_answer
   [ "$sw_answer" = yes ]
 }
+sw_status() { sw_call @STATUS@ 30; }
 sw_build() { sw_call @BUILD@ 3600; }
 sw_clean_cache() {
-  sw_call @CLEAN_CACHE@ 120 --ez dry_run true; sw_rc=$?
+  sw_call @CLEAN_CACHE@ 120 dry_run=true; sw_rc=$?
   [ "$sw_rc" -eq 10 ] || return "$sw_rc"
   sw_confirm 'The build cache shown above will be deleted. Projects and sources are not touched.' || { echo 'Cancelled.'; return 1; }
-  sw_call @CLEAN_CACHE@ 900 --ez confirmed true
+  sw_call @CLEAN_CACHE@ 900 confirmed=true
 }
 sw_clean_gradle_backups() {
-  sw_call @CLEAN_GRADLE@ 120 --ez dry_run true; sw_rc=$?
+  sw_call @CLEAN_GRADLE@ 120 dry_run=true; sw_rc=$?
   [ "$sw_rc" -eq 10 ] || return "$sw_rc"
   sw_confirm 'The Gradle backups listed above will be deleted. The current Gradle files are not touched.' || { echo 'Cancelled.'; return 1; }
-  sw_call @CLEAN_GRADLE@ 120 --ez confirmed true
+  sw_call @CLEAN_GRADLE@ 120 confirmed=true
 }
 sw_help() {
 @HELP_LINES@}
@@ -429,7 +429,7 @@ gradlew() {
 }
 swdoctor() {
   echo '--- Sketchware Neo Terminal diagnostics ---'; echo "Directory: $PWD"; echo "UID: $(id 2>/dev/null)"; echo "Android: $(getprop ro.build.version.release 2>/dev/null)"; echo
-  for c in sh ls cat grep find sed awk git gradle npm node pkg cmake ninja clang clang++ am; do command -v "$c" >/dev/null 2>&1 && printf '  [OK]   %s: %s\\n' "$c" "$(command -v "$c")" || printf '  [MISS] %s\\n' "$c"; done
+  for c in sh ls cat grep find sed awk git gradle npm node pkg cmake ninja clang clang++; do command -v "$c" >/dev/null 2>&1 && printf '  [OK]   %s: %s\\n' "$c" "$(command -v "$c")" || printf '  [MISS] %s\\n' "$c"; done
   if [ -f ./gradlew ]; then echo 'Gradle wrapper: present in current directory'; else echo 'Gradle wrapper: not present in current directory'; fi
   ndk_status
 }

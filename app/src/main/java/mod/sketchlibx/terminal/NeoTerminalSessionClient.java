@@ -13,28 +13,13 @@ import com.termux.terminal.TextStyle;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
-/**
- * Single class implementing both session-level callbacks ({@link TerminalSessionClient}) and
- * view-level input/rendering hooks ({@link TerminalViewClient}) — this is the standard combined
- * pattern used by minimal terminal-view integrations (AndroidIDE does the same thing across two
- * smaller classes; here it's one, since Sketchware Neo only ever needs a single session per view).
- * <p>
- * NOTE ON LIBRARY VERSIONING: TerminalSessionClient / TerminalViewClient's exact member list has
- * shifted slightly across termux-app releases (mostly additions, not removals). If Android Studio
- * flags this class as not fully implementing an interface after you sync Gradle, hit
- * Alt+Enter → "Implement methods" on the class name — it'll show you exactly what your pinned
- * {@code termuxVersion} expects and you fill in the 1-2 extra stubs. Everything with actual
- * terminal-behavior logic (colors, keys, session lifecycle) is implemented below; anything
- * version-specific left as a stub is UI polish (long-press menus, scale-to-zoom, etc.), not
- * PTY/env correctness.
- */
 public class NeoTerminalSessionClient implements TerminalSessionClient, TerminalViewClient {
 
     private static final String TAG = "NeoTerminal";
 
     private static final int TERMINAL_BACKGROUND = Color.parseColor("#121212");
     private static final int TERMINAL_FOREGROUND = Color.parseColor("#E0E0E0");
-    private static final int TERMINAL_CURSOR = Color.parseColor("#4CAF50"); // green cursor, matches the prompt accent
+    private static final int TERMINAL_CURSOR = Color.parseColor("#4CAF50"); // green cursor
 
     private final WeakReference<TerminalView> terminalViewRef;
     private final WeakReference<NeoTerminalView> terminalOwnerRef;
@@ -50,10 +35,6 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
         return terminalViewRef.get();
     }
 
-    // ---------------------------------------------------------------------
-    // TerminalSessionClient — session lifecycle / output
-    // ---------------------------------------------------------------------
-
     @Override
     public void onTextChanged(TerminalSession changedSession) {
         TerminalView v = view();
@@ -64,8 +45,6 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public void onTitleChanged(TerminalSession changedSession) {
-        // No tab-title UI in any of the 3 placements yet — hook left here for when you add one
-        // (e.g. show the shell's OSC-set title in the BottomSheet's drag handle or the Activity toolbar).
     }
 
     @Override
@@ -102,8 +81,7 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public void onBell(TerminalSession session) {
-        // Deliberately silent — a beeping IDE terminal is more annoying than useful.
-        // Flash the background briefly if you want a visual bell later.
+
     }
 
     @Override
@@ -114,7 +92,7 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public void onTerminalCursorStateChange(boolean state) {
-        // Blink state changed — TerminalView redraws itself on its own timer, nothing to do.
+
     }
 
     @Override
@@ -122,12 +100,6 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
         return null; // library default (block cursor)
     }
 
-    /**
-     * Called once the session's {@code TerminalEmulator} exists (right after {@link TerminalView}
-     * measures itself and calls {@code session.initializeEmulator(...)} for the first time).
-     * This is the correct, and only reliable, point to push the app's default color scheme —
-     * the emulator (and its 256-color palette) genuinely does not exist before this fires.
-     */
     @Override
     public void onEmulatorSet() {
         TerminalView v = view();
@@ -139,17 +111,11 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
             session.getEmulator().mColors.mCurrentColors[TextStyle.COLOR_INDEX_FOREGROUND] = TERMINAL_FOREGROUND;
             session.getEmulator().mColors.mCurrentColors[TextStyle.COLOR_INDEX_CURSOR] = TERMINAL_CURSOR;
         } catch (Throwable t) {
-            // If TextStyle's index constants moved in your pinned termux version, don't crash the
-            // terminal over cosmetics — it'll just render with the library's stock dark scheme
-            // (which is already a very close match to #121212/#E0E0E0).
             Log.w(TAG, "Could not apply custom color scheme, falling back to library default", t);
         }
         if (v != null) v.onScreenUpdated();
     }
 
-    // ---------------------------------------------------------------------
-    // TerminalViewClient — input / view behavior
-    // ---------------------------------------------------------------------
 
     @Override
     public float onScale(float scale) {
@@ -169,7 +135,7 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public boolean shouldBackButtonBeMappedToEscape() {
-        return false; // let system back button behave normally (close BottomSheet / Activity)
+        return false; // let system back button
     }
 
     @Override
@@ -193,7 +159,7 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent e, TerminalSession session) {
-        return false; // let TerminalView's default handling process the key
+        return false;
     }
 
     @Override
@@ -203,7 +169,7 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public boolean onLongPress(MotionEvent event) {
-        return false; // no custom text-selection menu yet — default long-press selection still works
+        return false;
     }
 
     @Override
@@ -228,7 +194,7 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
 
     @Override
     public boolean onCodePoint(int codePoint, boolean ctrlDown, TerminalSession session) {
-        return false; // let the library's default codepoint handling write to the session
+        return false;
     }
 
     @Override
@@ -266,12 +232,10 @@ public class NeoTerminalSessionClient implements TerminalSessionClient, Terminal
         Log.e(tag, "", e);
     }
 
-    /** Wired to the "Ctrl" toggle button in {@link NeoTerminalView}'s extra-keys row. */
     public void setCtrlDown(boolean down) {
         this.ctrlDown = down;
     }
 
-    /** Wired to the "Alt" toggle button in {@link NeoTerminalView}'s extra-keys row. */
     public void setAltDown(boolean down) {
         this.altDown = down;
     }
