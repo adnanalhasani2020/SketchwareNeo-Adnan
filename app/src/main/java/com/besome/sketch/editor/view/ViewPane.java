@@ -510,27 +510,45 @@ public class ViewPane extends RelativeLayout {
         view.setScaleY(viewBean.scaleY);
         String backgroundResource = viewBean.layout.backgroundResource;
         if (backgroundResource != null) {
-            try {
-                if (resourcesManager.h(backgroundResource) == ProjectResourceBean.PROJECT_RES_TYPE_RESOURCE) {
-                    view.setBackgroundResource(getContext().getResources().getIdentifier(viewBean.layout.backgroundResource, "drawable", getContext().getPackageName()));
-                } else {
-                    String backgroundRes = resourcesManager.f(viewBean.layout.backgroundResource);
-                    if (backgroundRes.endsWith(".9.png")) {
-                        Bitmap decodedBitmap = zB.a(backgroundRes);
-                        byte[] ninePatchChunk = decodedBitmap.getNinePatchChunk();
-                        if (NinePatch.isNinePatchChunk(ninePatchChunk)) {
-                            view.setBackground(new NinePatchDrawable(getResources(), decodedBitmap, ninePatchChunk, new Rect(), null));
-                        } else {
-                            view.setBackground(new BitmapDrawable(getResources(), backgroundRes));
+            backgroundResource = backgroundResource.trim();
+            if (backgroundResource.startsWith("@drawable/")) {
+                backgroundResource = backgroundResource.substring("@drawable/".length()).trim();
+            }
+            boolean hasBackgroundResource = !backgroundResource.isEmpty()
+                    && !"NONE".equalsIgnoreCase(backgroundResource);
+            if (hasBackgroundResource) {
+                try {
+                    if (resourcesManager.h(backgroundResource) == ProjectResourceBean.PROJECT_RES_TYPE_RESOURCE) {
+                        int backgroundId = getContext().getResources().getIdentifier(
+                                backgroundResource, "drawable", getContext().getPackageName());
+                        if (backgroundId != 0) {
+                            view.setBackgroundResource(backgroundId);
                         }
                     } else {
-                        Bitmap decodeFile2 = BitmapFactory.decodeFile(backgroundRes);
-                        int round2 = Math.round(getResources().getDisplayMetrics().density / 2.0f);
-                        view.setBackground(new BitmapDrawable(getResources(), Bitmap.createScaledBitmap(decodeFile2, decodeFile2.getWidth() * round2, decodeFile2.getHeight() * round2, true)));
+                        String backgroundRes = resourcesManager.f(backgroundResource);
+                        if (backgroundRes != null && backgroundRes.endsWith(".9.png")) {
+                            Bitmap decodedBitmap = zB.a(backgroundRes);
+                            if (decodedBitmap != null) {
+                                byte[] ninePatchChunk = decodedBitmap.getNinePatchChunk();
+                                if (NinePatch.isNinePatchChunk(ninePatchChunk)) {
+                                    view.setBackground(new NinePatchDrawable(getResources(), decodedBitmap, ninePatchChunk, new Rect(), null));
+                                } else {
+                                    view.setBackground(new BitmapDrawable(getResources(), backgroundRes));
+                                }
+                            }
+                        } else if (backgroundRes != null) {
+                            Bitmap decodedBitmap = BitmapFactory.decodeFile(backgroundRes);
+                            if (decodedBitmap != null) {
+                                int round2 = Math.max(1, Math.round(getResources().getDisplayMetrics().density / 2.0f));
+                                view.setBackground(new BitmapDrawable(getResources(), Bitmap.createScaledBitmap(
+                                        decodedBitmap, Math.max(1, decodedBitmap.getWidth() * round2),
+                                        Math.max(1, decodedBitmap.getHeight() * round2), true)));
+                            }
+                        }
                     }
+                } catch (Exception e) {
+                    Log.e("DEBUG", "Unable to preview background resource: " + backgroundResource, e);
                 }
-            } catch (Exception e) {
-                Log.e("DEBUG", e.getMessage(), e);
             }
         }
         Gx classInfo = viewBean.getClassInfo();

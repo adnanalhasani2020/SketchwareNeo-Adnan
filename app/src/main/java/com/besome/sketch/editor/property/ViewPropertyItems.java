@@ -1239,7 +1239,23 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                 if (image_item.getKey().equals("property_image")) {
                     bean.image.resName = image_item.getValue();
                 } else if (image_item.getKey().equals("property_background_resource")) {
-                    bean.layout.backgroundResource = image_item.getValue();
+                    String selectedBackground = image_item.getValue();
+                    if (selectedBackground == null
+                            || selectedBackground.trim().isEmpty()
+                            || "NONE".equalsIgnoreCase(selectedBackground.trim())
+                            || "@drawable/".equalsIgnoreCase(selectedBackground.trim())) {
+                        // Keep the no-resource selection absent in the model. Writing an
+                        // empty drawable name would produce android:background="@drawable/".
+                        bean.layout.backgroundResource = null;
+                    } else {
+                        String normalizedBackground = selectedBackground.trim();
+                        if (normalizedBackground.startsWith("@drawable/")) {
+                            normalizedBackground = normalizedBackground.substring("@drawable/".length()).trim();
+                        }
+                        bean.layout.backgroundResource = normalizedBackground.isEmpty()
+                                || "NONE".equalsIgnoreCase(normalizedBackground)
+                                ? null : normalizedBackground;
+                    }
                 }
             } else if (view instanceof PropertySizeItem sizeItem) {
                 if (sizeItem.getKey().equals("property_divider_height")) {

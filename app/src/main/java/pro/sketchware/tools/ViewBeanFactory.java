@@ -784,19 +784,36 @@ public class ViewBeanFactory {
     private void applyBackground(
             String name, String background, Map<String, String> injectAttributes) {
         var bean = this.bean.layout;
-        if (background != null) {
-            if (PropertiesUtil.isHexColor(background)) {
-                bean.backgroundColor = PropertiesUtil.parseColor(background);
-            } else if (background.startsWith("@color/") || background.startsWith("?")) {
-                bean.backgroundResColor = background;
-                bean.backgroundColor = 0xFFFFFFFF;
-            } else if (background.startsWith("@drawable/")) {
-                bean.backgroundResource = parseReferName(background, "/");
-            } else if (background.equals("@android:color/transparent")) {
-                bean.backgroundColor = 0;
+        if (background == null) return;
+
+        String normalizedBackground = background.trim();
+        // A missing background resource is not an Android drawable reference. This also
+        // sanitizes layouts saved by older versions with android:background="@drawable/".
+        if (normalizedBackground.isEmpty()
+                || "none".equalsIgnoreCase(normalizedBackground)
+                || "@drawable/".equalsIgnoreCase(normalizedBackground)) {
+            bean.backgroundResource = null;
+            return;
+        }
+
+        background = normalizedBackground;
+        if (PropertiesUtil.isHexColor(background)) {
+            bean.backgroundColor = PropertiesUtil.parseColor(background);
+        } else if (background.startsWith("@color/") || background.startsWith("?")) {
+            bean.backgroundResColor = background;
+            bean.backgroundColor = 0xFFFFFFFF;
+        } else if (background.startsWith("@drawable/")) {
+            String resourceName = parseReferName(background, "/");
+            if (resourceName != null && !resourceName.trim().isEmpty()
+                    && !"none".equalsIgnoreCase(resourceName.trim())) {
+                bean.backgroundResource = resourceName.trim();
             } else {
-                injectAttributes.put(name, background);
+                bean.backgroundResource = null;
             }
+        } else if (background.equals("@android:color/transparent")) {
+            bean.backgroundColor = 0;
+        } else {
+            injectAttributes.put(name, background);
         }
     }
 

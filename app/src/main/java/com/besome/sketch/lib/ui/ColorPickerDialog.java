@@ -25,6 +25,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
 import a.a.a.DB;
 import a.a.a.GB;
@@ -63,6 +64,7 @@ public class ColorPickerDialog extends PopupWindow {
     private int l;
     private int m = -1;
     private DB colorPref;
+    private boolean customColorStorageReady;
     private boolean hasMaterialColors;
     private Material3LibraryManager material3LibraryManager;
     private yq yq;
@@ -96,7 +98,12 @@ public class ColorPickerDialog extends PopupWindow {
         dialog.setTitle(R.string.picker_color_title_delete_all_custom_color);
         dialog.setMessage(R.string.picker_color_message_delete_all_custom_color);
         dialog.setPositiveButton(R.string.common_word_delete, (v, which) -> {
-            colorPref.a();
+            if (!customColorStorageReady || !CustomColorStore.clear(activity)) {
+                SketchwareUtil.toastError("Could not clear custom colors. Check access to .sketchware/resources/colors/colors.xml.");
+                return;
+            }
+            // Clear only the legacy color key. Do not wipe saved custom attributes (P24I2).
+            colorPref.a("P24I1", (Object) "");
             colorGroups.set(0, getSavedColorBeans());
             notifyChanges();
             v.dismiss();
@@ -116,6 +123,13 @@ public class ColorPickerDialog extends PopupWindow {
     public void initialize(Activity activity, String color, boolean isTransparentColor, boolean isNoneColor) {
         this.activity = activity;
         colorPref = new DB(activity, "P24");
+        // One-time migration from the old SharedPreferences-backed collection.
+        // Clear the old key only after the complete XML file has been committed.
+        String legacyColors = colorPref.f("P24I1");
+        customColorStorageReady = CustomColorStore.migrateLegacyColors(activity, legacyColors);
+        if (customColorStorageReady && legacyColors != null && !legacyColors.trim().isEmpty()) {
+            colorPref.a("P24I1", (Object) "");
+        }
         initializeColorData(isTransparentColor, isNoneColor);
         initializeResColors();
         initializeAttrsList();
@@ -267,11 +281,15 @@ public class ColorPickerDialog extends PopupWindow {
                 .setPositiveButton(Helper.getResString(R.string.common_word_save), (dialog, which) -> {
                     if (colorValidator.b()) {
                         String customColor = Helper.getText(dialogBinding.etCustomColor);
-                        if (customColor.startsWith("#")) {
-                            customColor = customColor.substring(1);
+                        if (!customColor.startsWith("#")) {
+                            customColor = "#" + customColor;
                         }
-                        String formattedColor = String.format("#%8s", customColor).replaceAll(" ", "F");
-                        savePickedColor(formattedColor.toUpperCase());
+                        String formattedColor = CustomColorStore.normalizeColor(customColor);
+                        if (formattedColor == null) {
+                            SketchwareUtil.toastError("Enter a valid hex color, such as #RRGGBB or #AARRGGBB.");
+                            return;
+                        }
+                        savePickedColor(formattedColor);
                         notifyChanges();
                     }
                 })
@@ -442,53 +460,66 @@ public class ColorPickerDialog extends PopupWindow {
     }
 
     private void removeSavedColor(String color) {
-        String savedColors = colorPref.f("P24I1");
-        if (savedColors.contains(color)) {
-            String colorToRemove = color + ",";
-            String colorToSave = savedColors.replaceAll(colorToRemove, "");
-            colorPref.a("P24I1", (Object) colorToSave);
-            colorGroups.set(0, getSavedColorBeans());
-            notifyChanges();
+        if (!customColorStorageReady) {
+            SketchwareUtil.toastError("Custom colors could not be migrated safely. The existing data was left unchanged.");
+            return;
         }
+        List<String> savedColors = CustomColorStore.readColors(activity);
+        if (savedColors == null) {
+            SketchwareUtil.toastError("Could not read .sketchware/resources/colors/colors.xml. The file was left unchanged.");
+            return;
+        }
+
+        String normalized = CustomColorStore.normalizeColor(color);
+        if (normalized == null || !savedColors.contains(normalized)) {
+            return;
+        }
+        if (!CustomColorStore.removeColor(activity, normalized)) {
+            SketchwareUtil.toastError("Could not save changes to colors.xml. The existing file was preserved.");
+            return;
+        }
+        colorGroups.set(0, getSavedColorBeans());
+        notifyChanges();
+    }
+
+    private List<String> getSavedColorValues() {
+        List<String> fileColors = CustomColorStore.readColors(activity);
+        List<String> colors = fileColors == null ? new ArrayList<>() : new ArrayList<>(fileColors);
+
+        // If migration/write access failed, continue showing the old collection while
+        // retaining its SharedPreferences value for a future safe migration attempt.
+        String legacyColors = colorPref == null ? null : colorPref.f("P24I1");
+        if (legacyColors != null && !legacyColors.trim().isEmpty()) {
+            for (String legacyColor : legacyColors.split(",")) {
+                String normalized = CustomColorStore.normalizeColor(legacyColor);
+                if (normalized != null && !colors.contains(normalized)) {
+                    colors.add(normalized);
+                }
+            }
+        }
+        return colors;
     }
 
     private ColorBean[] getSavedColorBeans() {
-        String savedColors = colorPref.f("P24I1");
-        ColorBean[] colorBeansResult;
-        if (!savedColors.isEmpty()) {
-            String[] colorStrings = savedColors.split(",");
-            ColorBean[] colorBeans = new ColorBean[colorStrings.length];
-            int index = 0;
-            while (index < colorStrings.length) {
-                try {
-                    int parsedColor = Color.parseColor(colorStrings[index]);
-                    int red = Color.red(parsedColor);
-                    int green = Color.green(parsedColor);
-                    int blue = Color.blue(parsedColor);
+        List<String> colorStrings = getSavedColorValues();
+        ArrayList<ColorBean> colorBeans = new ArrayList<>();
+        for (String colorString : colorStrings) {
+            try {
+                int parsedColor = Color.parseColor(colorString);
+                int lightChannelCount = 0;
+                if (Color.red(parsedColor) > 240) lightChannelCount++;
+                if (Color.green(parsedColor) > 240) lightChannelCount++;
+                if (Color.blue(parsedColor) > 240) lightChannelCount++;
 
-                    int count = 0;
-                    if (red > 240) count++;
-                    if (green > 240) count++;
-                    if (blue > 240) count++;
-
-
-                    colorBeans[index] = new ColorBean(colorStrings[index], "CUSTOM",
-                            count >= 2 ? "#212121" : "#ffffff",
-                            R.drawable.checked_white_32);
-
-                } catch (Exception e) {
-                    colorPref.a();
-                    colorBeans = new ColorBean[0];
-                    break;
-                }
-                index++;
+                colorBeans.add(new ColorBean(colorString, "CUSTOM",
+                        lightChannelCount >= 2 ? "#212121" : "#ffffff",
+                        R.drawable.checked_white_32));
+            } catch (IllegalArgumentException e) {
+                // Skip an invalid legacy entry without clearing unrelated saved data.
+                android.util.Log.w("ColorPickerDialog", "Ignoring invalid saved custom color: " + colorString, e);
             }
-            colorBeansResult = colorBeans;
-        } else {
-            colorBeansResult = new ColorBean[0];
         }
-
-        return colorBeansResult;
+        return colorBeans.toArray(new ColorBean[0]);
     }
 
     private void smoothScrollToCurrentItem() {
@@ -500,17 +531,28 @@ public class ColorPickerDialog extends PopupWindow {
     }
 
     private void savePickedColor(String color) {
-        String savedColors = colorPref.f("P24I1");
-        if (savedColors.contains(color)) {
-            bB.b(activity, activity.getString(R.string.picker_color_already_exist), 0).show();
-        } else {
-            String colorsToSave = color + "," + savedColors;
-            colorPref.a("P24I1", (Object) colorsToSave);
-            colorGroups.set(0, getSavedColorBeans());
-            notifyChanges();
-            k = 0;
-            smoothScrollToCurrentItem();
+        String normalized = CustomColorStore.normalizeColor(color);
+        if (!customColorStorageReady) {
+            SketchwareUtil.toastError("Custom colors could not be migrated safely. The color was not saved.");
+            return;
         }
+        List<String> savedColors = CustomColorStore.readColors(activity);
+        if (normalized == null || savedColors == null) {
+            SketchwareUtil.toastError("Could not access .sketchware/resources/colors/colors.xml. The color was not saved.");
+            return;
+        }
+        if (savedColors.contains(normalized)) {
+            bB.b(activity, activity.getString(R.string.picker_color_already_exist), 0).show();
+            return;
+        }
+        if (!CustomColorStore.addColor(activity, normalized)) {
+            SketchwareUtil.toastError("Could not save the custom color to colors.xml.");
+            return;
+        }
+        colorGroups.set(0, getSavedColorBeans());
+        notifyChanges();
+        k = 0;
+        smoothScrollToCurrentItem();
     }
 
     private void notifyChanges() {

@@ -186,9 +186,25 @@ public class Ox {
         var injectHandler = new InjectAttributeHandler(viewBean);
         Set<String> toNotAdd = readAttributesToReplace(viewBean);
         String backgroundResource = viewBean.layout.backgroundResource;
+        if (backgroundResource != null) {
+            backgroundResource = backgroundResource.trim();
+            // Older picker/import flows can store an empty string, "none", or the
+            // incomplete reference "@drawable/" for the no-resource selection.
+            // Normalize those sentinels before deciding whether to emit a drawable.
+            if (backgroundResource.isEmpty()
+                    || "NONE".equalsIgnoreCase(backgroundResource)
+                    || "@drawable/".equalsIgnoreCase(backgroundResource)) {
+                backgroundResource = null;
+            } else if (backgroundResource.startsWith("@drawable/")) {
+                backgroundResource = backgroundResource.substring("@drawable/".length()).trim();
+                if (backgroundResource.isEmpty() || "NONE".equalsIgnoreCase(backgroundResource)) {
+                    backgroundResource = null;
+                }
+            }
+        }
         int type = viewBean.type;
 
-        if (backgroundResource == null || "NONE".equalsIgnoreCase(backgroundResource)) {
+        if (backgroundResource == null) {
             int backgroundColor = viewBean.layout.backgroundColor;
             String backgroundResColor = viewBean.layout.backgroundResColor;
 
@@ -456,8 +472,12 @@ public class Ox {
             }
         }
         
-        if (!viewBean.inject.isEmpty()) {
-            widgetTag.addAttributeValue(XmlUtil.normalizeInjectedAttributes(viewBean.inject));
+        if (viewBean.inject != null && !viewBean.inject.isEmpty()) {
+            String normalizedInject = removeEmptyBackgroundResourceAttribute(viewBean.inject);
+            normalizedInject = XmlUtil.normalizeInjectedAttributes(normalizedInject);
+            if (!normalizedInject.isEmpty()) {
+                widgetTag.addAttributeValue(normalizedInject);
+            }
         }
 
         if (viewBean.parentAttributes != null && !viewBean.parentAttributes.isEmpty()) {
@@ -996,6 +1016,19 @@ public class Ox {
                 }
                 break;
         }
+    }
+
+    /**
+     * Remove only invalid "no background" values from injected XML attributes.
+     * Older projects or the generic attribute editor may have persisted these even
+     * after the dedicated background-resource picker was corrected.
+     */
+    private String removeEmptyBackgroundResourceAttribute(String inject) {
+        if (inject == null || inject.isEmpty()) return "";
+        return Pattern.compile(
+                "(?i)(?:^|\\s+)android\\s*:\\s*background\\s*=\\s*(['\"])(?:\\s*|none|@drawable\\s*/\\s*(?:none)?)\\1")
+                .matcher(inject)
+                .replaceAll("");
     }
 
     private boolean hasAttr(String attrName, ViewBean bean) {

@@ -209,7 +209,10 @@ public class ViewProperty extends LinearLayout implements Kw {
                 for (ViewBean viewBean : viewBeans) {
                     String backgroundResource = viewBean.layout.backgroundResource;
                     String resName = viewBean.image.resName;
-                    if (backgroundResource != null && !backgroundResource.equals("NONE") && jC.d(sc_id).l(backgroundResource) && !Op.g().b(backgroundResource)) {
+                    if (backgroundResource != null && !backgroundResource.trim().isEmpty()
+                            && !"NONE".equalsIgnoreCase(backgroundResource.trim())
+                            && !"@drawable/".equalsIgnoreCase(backgroundResource.trim())
+                            && jC.d(sc_id).l(backgroundResource) && !Op.g().b(backgroundResource)) {
                         try {
                             Op.g().a(sc_id, jC.d(sc_id).g(backgroundResource));
                         } catch (Exception e) {

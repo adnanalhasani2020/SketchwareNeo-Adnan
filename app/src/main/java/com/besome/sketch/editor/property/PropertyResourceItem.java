@@ -107,7 +107,10 @@ public class PropertyResourceItem extends RelativeLayout implements View.OnClick
     }
 
     public void setValue(String str) {
-        if (str == null || str.trim().isEmpty() || "NONE".equalsIgnoreCase(str.trim())) {
+        String normalized = str == null ? "" : str.trim();
+        if (normalized.isEmpty() || "NONE".equalsIgnoreCase(normalized)
+                || "@drawable/".equalsIgnoreCase(normalized)
+                || "@drawable/NONE".equalsIgnoreCase(normalized)) {
             // NONE means no resource; never treat it as a drawable name such as none.xml.
             c = "";
             f.setText("NONE");
@@ -115,9 +118,20 @@ public class PropertyResourceItem extends RelativeLayout implements View.OnClick
             g.setBackgroundColor(Color.TRANSPARENT);
             return;
         }
+        if (normalized.startsWith("@drawable/")) {
+            normalized = normalized.substring("@drawable/".length()).trim();
+        }
+        if (normalized.isEmpty() || "NONE".equalsIgnoreCase(normalized)) {
+            c = "";
+            f.setText("NONE");
+            g.setImageDrawable(null);
+            g.setBackgroundColor(Color.TRANSPARENT);
+            return;
+        }
 
-        c = str;
-        f.setText(str);
+        c = normalized;
+        str = normalized;
+        f.setText(normalized);
         if (jC.d(a).h(str) == ProjectResourceBean.PROJECT_RES_TYPE_RESOURCE) {
             int resourceId = getContext().getResources().getIdentifier(str, "drawable", getContext().getPackageName());
             if (resourceId != 0) {
@@ -195,7 +209,9 @@ public class PropertyResourceItem extends RelativeLayout implements View.OnClick
     public final void a() {
         boolean allowShapes = "property_background_resource".equals(b);
         showPickerDialog(Helper.getText(e), m, c, selected -> {
-            String normalized = selected == null || "NONE".equalsIgnoreCase(selected) ? "" : selected;
+            String trimmed = selected == null ? "" : selected.trim();
+            String normalized = trimmed.isEmpty() || "NONE".equalsIgnoreCase(trimmed)
+                    || "@drawable/".equalsIgnoreCase(trimmed) ? "" : trimmed;
             setValue(normalized);
             if (n != null) {
                 n.a(b, normalized);
