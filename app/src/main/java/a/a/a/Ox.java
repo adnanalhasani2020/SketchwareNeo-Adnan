@@ -291,14 +291,31 @@ public class Ox {
         XmlBuilder widgetTag = convert.isEmpty() ? new XmlBuilder(viewBean.getClassInfo().getClassName()) :
                 new XmlBuilder(convert.replaceAll(" ", ""));
                 
-        // PRO FIX: Strict logic to map the correct explicit android:id to <include> tags, preventing layout ID overrides!
+        // An include is only valid when its target layout exists. Never invent a layout name from its view ID.
         if (convert.equals("include")) {
+            if (viewBean.customView == null || viewBean.customView.trim().isEmpty()
+                    || "none".equalsIgnoreCase(viewBean.customView.trim())) {
+                LogUtil.e("ViewXml", "Skipping include without a selected layout. View id=" + viewBean.id);
+                return;
+            }
             if (!toNotAdd.contains("android:id")) {
                 widgetTag.addAttribute("android", "id", "@+id/" + viewBean.id);
             }
             if (!toNotAdd.contains("layout") && !injectHandler.contains("layout")) {
-                String layoutName = viewBean.customView != null && !viewBean.customView.isEmpty() ? viewBean.customView : viewBean.id;
+                String layoutName = viewBean.customView.trim().replaceFirst("\\.xml$", "");
                 widgetTag.addAttribute("", "layout", "@layout/" + layoutName);
+            }
+            if (!toNotAdd.contains("android:layout_width") && !injectHandler.contains("layout_width")) {
+                int width = viewBean.layout.width;
+                widgetTag.addAttribute("android", "layout_width",
+                        width == ViewGroup.LayoutParams.MATCH_PARENT ? "match_parent"
+                                : width == ViewGroup.LayoutParams.WRAP_CONTENT ? "wrap_content" : width + "dp");
+            }
+            if (!toNotAdd.contains("android:layout_height") && !injectHandler.contains("layout_height")) {
+                int height = viewBean.layout.height;
+                widgetTag.addAttribute("android", "layout_height",
+                        height == ViewGroup.LayoutParams.MATCH_PARENT ? "match_parent"
+                                : height == ViewGroup.LayoutParams.WRAP_CONTENT ? "wrap_content" : height + "dp");
             }
         } else {
             if (!toNotAdd.contains("android:id")) {
@@ -430,7 +447,8 @@ public class Ox {
             }
         }
 
-        if (viewBean.getClassInfo().a("ViewGroup") || viewBean.type == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT) {
+        if (!"include".equals(viewBean.convert)
+                && (viewBean.getClassInfo().a("ViewGroup") || viewBean.type == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT)) {
             for (ViewBean bean : views) {
                 if (bean.parent != null && bean.parent.equals(viewBean.id)) {
                     writeWidget(widgetTag, bean);
@@ -447,7 +465,12 @@ public class Ox {
                 String key = entry.getKey();
                 String value = entry.getValue();
                 String[] parts = key.split(":");
-                widgetTag.addAttribute(parts[0], parts[1], RELATIVE_IDS.contains(key) ? "@id/" + value : value);
+                String attributeValue = value;
+                if (RELATIVE_IDS.contains(key) && !attributeValue.startsWith("@id/")
+                        && !attributeValue.startsWith("@+id/") && !"parent".equals(attributeValue)) {
+                    attributeValue = "@id/" + attributeValue;
+                }
+                widgetTag.addAttribute(parts[0], parts[1], attributeValue);
             }
         }
 
@@ -874,14 +897,18 @@ public class Ox {
                 break;
 
             case ViewBean.VIEW_TYPE_WIDGET_SEEKBAR:
-                int progress = viewBean.progress;
-                if (progress > ViewBean.DEFAULT_PROGRESS && !toNotAdd.contains("android:progress") && !injectHandler.contains("progress")) {
-                    nx.addAttribute("android", "progress", String.valueOf(progress));
-                }
-
-                int max = viewBean.max;
-                if (max != ViewBean.DEFAULT_MAX && !toNotAdd.contains("android:max") && !injectHandler.contains("max")) {
-                    nx.addAttribute("android", "max", String.valueOf(max));
+                boolean materialSlider = viewBean.convert != null
+                        && (viewBean.convert.endsWith(".Slider") || viewBean.convert.endsWith(".MaterialSlider")
+                        || viewBean.convert.equals("Slider") || viewBean.convert.equals("MaterialSlider"));
+                if (!materialSlider) {
+                    int progress = viewBean.progress;
+                    if (progress > ViewBean.DEFAULT_PROGRESS && !toNotAdd.contains("android:progress") && !injectHandler.contains("progress")) {
+                        nx.addAttribute("android", "progress", String.valueOf(progress));
+                    }
+                    int max = viewBean.max;
+                    if (max != ViewBean.DEFAULT_MAX && !toNotAdd.contains("android:max") && !injectHandler.contains("max")) {
+                        nx.addAttribute("android", "max", String.valueOf(max));
+                    }
                 }
                 break;
 
@@ -945,12 +972,12 @@ public class Ox {
                 break;
 
             case ViewBean.VIEW_TYPE_WIDGET_PROGRESSBAR:
-                progress = viewBean.progress;
+                int progress = viewBean.progress;
                 if (progress > ViewBean.DEFAULT_PROGRESS && !toNotAdd.contains("android:progress") && !injectHandler.contains("progress")) {
                     nx.addAttribute("android", "progress", String.valueOf(progress));
                 }
 
-                max = viewBean.max;
+                int max = viewBean.max;
                 if (max != ViewBean.DEFAULT_MAX && !toNotAdd.contains("android:max") && !injectHandler.contains("max")) {
                     nx.addAttribute("android", "max", String.valueOf(max));
                 }
@@ -960,7 +987,11 @@ public class Ox {
                     nx.addAttribute("android", "indeterminate", indeterminate);
                 }
                 String progressStyle = viewBean.progressStyle;
-                if (progressStyle != null && !progressStyle.isEmpty() && !toNotAdd.contains("style") && !injectHandler.contains("style")) {
+                boolean materialIndicator = viewBean.convert != null
+                        && (viewBean.convert.contains(".progressindicator.")
+                        || viewBean.convert.endsWith("MaterialProgressIndicator"));
+                if (!materialIndicator && progressStyle != null && !progressStyle.isEmpty()
+                        && !toNotAdd.contains("style") && !injectHandler.contains("style")) {
                     nx.addAttribute(null, "style", progressStyle);
                 }
                 break;

@@ -92,15 +92,43 @@ public class ItemProgressBar extends LinearLayout implements ItemView {
                 (int) (bottom * dip));
     }
 
-    public void setProgressBarStyle(String progressBarStyle) {
-        if ("?android:progressBarStyle".equals(progressBarStyle)) {
-            imageView.setImageResource(R.drawable.progressbar_circle_48dp);
-            imageView.getLayoutParams().width = (int) (dip * 30F);
-            imageView.getLayoutParams().height = (int) (dip * 30F);
-        } else if ("?android:progressBarStyleHorizontal".equals(progressBarStyle)) {
+    /** Updates the editor-only preview from the actual indicator class and its style attribute. */
+    public void setProgressBarStyle(ViewBean bean) {
+        if (bean == null) return;
+        String convert = bean.convert == null ? "" : bean.convert;
+        String style = new pro.sketchware.utility.InjectAttributeHandler(bean).getAttributeValueOf("style");
+        boolean material = convert.contains(".progressindicator.");
+        boolean linear = convert.endsWith("LinearProgressIndicator");
+        boolean wavy = style.endsWith("CircularProgressIndicator.Wavy")
+                || style.endsWith("LinearProgressIndicator.Wavy");
+
+        ViewGroup.LayoutParams params = imageView.getLayoutParams();
+        if (material) {
+            if (linear) {
+                imageView.setImageResource(wavy
+                        ? R.drawable.progressbar_linear_wave_48dp
+                        : R.drawable.progressbar_horizontal_48dp);
+                params.width = (int) (dip * 220F);
+                params.height = (int) (dip * (wavy ? 28F : 8F));
+            } else {
+                imageView.setImageResource(wavy
+                        ? R.drawable.progressbar_circular_wave_48dp
+                        : R.drawable.progressbar_circle_48dp);
+                int size = (int) (dip * (wavy ? 42F : 30F));
+                params.width = size;
+                params.height = size;
+            }
+        } else if ("?android:progressBarStyleHorizontal".equals(bean.progressStyle)) {
             imageView.setImageResource(R.drawable.progressbar_horizontal_48dp);
-            imageView.getLayoutParams().width = (int) (dip * 320F);
-            imageView.getLayoutParams().height = (int) (dip * 30F);
+            params.width = (int) (dip * 220F);
+            params.height = (int) (dip * 8F);
+        } else {
+            imageView.setImageResource(R.drawable.progressbar_circle_48dp);
+            int size = (int) (dip * 30F);
+            params.width = size;
+            params.height = size;
         }
+        imageView.setLayoutParams(params);
+        requestLayout();
     }
 }

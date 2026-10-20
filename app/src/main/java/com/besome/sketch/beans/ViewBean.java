@@ -229,27 +229,37 @@ public class ViewBean extends nA implements Parcelable {
     }
 
     public static int getViewTypeByTypeName(String typeName) {
-        return switch (typeName) {
+        if (typeName == null || typeName.trim().isEmpty()) return -1;
+        String normalizedName = typeName.trim();
+        String simpleName = normalizedName.substring(normalizedName.lastIndexOf('.') + 1);
+        return switch (simpleName) {
             case "RelativeLayout" -> VIEW_TYPE_LAYOUT_RELATIVE;
             case "ConstraintLayout", "androidx.constraintlayout.widget.ConstraintLayout" -> VIEW_TYPE_LAYOUT_CONSTRAINT;
-            case "Switch" -> VIEW_TYPE_WIDGET_SWITCH;
+            case "Switch", "MaterialSwitch", "SwitchMaterial" -> VIEW_TYPE_WIDGET_SWITCH;
             case "MapView" -> VIEW_TYPE_WIDGET_MAPVIEW;
-            case "ProgressBar" -> VIEW_TYPE_WIDGET_PROGRESSBAR;
+            case "ProgressBar", "MaterialProgressIndicator", "CircularProgressIndicator", "LinearProgressIndicator", "LoadingIndicator" -> VIEW_TYPE_WIDGET_PROGRESSBAR;
             case "WebView" -> VIEW_TYPE_WIDGET_WEBVIEW;
-            case "TextView" -> VIEW_TYPE_WIDGET_TEXTVIEW;
-            case "SeekBar" -> VIEW_TYPE_WIDGET_SEEKBAR;
+            case "TextView", "MaterialTextView" -> VIEW_TYPE_WIDGET_TEXTVIEW;
+            case "SeekBar", "Slider", "MaterialSlider" -> VIEW_TYPE_WIDGET_SEEKBAR;
             case "Spinner" -> VIEW_TYPE_WIDGET_SPINNER;
             case "CalendarView" -> VIEW_TYPE_WIDGET_CALENDARVIEW;
-            case "ImageView" -> VIEW_TYPE_WIDGET_IMAGEVIEW;
-            case "LinearLayout" -> VIEW_TYPE_LAYOUT_LINEAR;
+            case "ImageView", "ImageButton", "ShapeableImageView" -> VIEW_TYPE_WIDGET_IMAGEVIEW;
+            case "LinearLayout", "CoordinatorLayout", "include" -> VIEW_TYPE_LAYOUT_LINEAR;
             case "ListView" -> VIEW_TYPE_WIDGET_LISTVIEW;
             case "HScrollView" -> VIEW_TYPE_LAYOUT_HSCROLLVIEW;
-            case "CheckBox" -> VIEW_TYPE_WIDGET_CHECKBOX;
-            case "EditText" -> VIEW_TYPE_WIDGET_EDITTEXT;
+            case "CheckBox", "MaterialCheckBox", "Chip" -> VIEW_TYPE_WIDGET_CHECKBOX;
+            case "EditText", "TextInputEditText" -> VIEW_TYPE_WIDGET_EDITTEXT;
             case "AdView" -> VIEW_TYPE_WIDGET_ADVIEW;
             case "Button" -> VIEW_TYPE_WIDGET_BUTTON;
-            case "ScrollView" -> VIEW_TYPE_LAYOUT_VSCROLLVIEW;
-            default -> ViewBeans.getViewTypeByTypeName(typeName);
+            case "MaterialButton", "MaterialIconButton" -> ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON;
+            case "ScrollView", "NestedScrollView" -> VIEW_TYPE_LAYOUT_VSCROLLVIEW;
+            case "MaterialCardView", "CardView" -> ViewBeans.VIEW_TYPE_LAYOUT_CARDVIEW;
+            case "ExtendedFloatingActionButton" -> ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON;
+            case "MaterialRadioButton" -> ViewBeans.VIEW_TYPE_WIDGET_RADIOBUTTON;
+            case "MaterialButtonToggleGroup", "ChipGroup" -> ViewBeans.VIEW_TYPE_LAYOUT_RADIOGROUP;
+            case "MaterialAutoCompleteTextView" -> ViewBeans.VIEW_TYPE_WIDGET_AUTOCOMPLETETEXTVIEW;
+            case "TextInputLayout" -> ViewBeans.VIEW_TYPE_LAYOUT_TEXTINPUTLAYOUT;
+            default -> ViewBeans.getViewTypeByTypeName(simpleName);
         };
     }
 
@@ -301,6 +311,52 @@ public class ViewBean extends nA implements Parcelable {
             case VIEW_TYPE_WIDGET_ADVIEW -> R.drawable.ic_mtrl_ad;
             case VIEW_TYPE_WIDGET_MAPVIEW -> R.drawable.ic_mtrl_map;
             default -> ViewBeans.getViewTypeResId(type);
+        };
+    }
+
+    /**
+     * Returns the component-category label shown by the property selector and component tree.
+     * Material widgets which share a Sketchware type ID keep the familiar category label, while
+     * important containers retain their precise names so NestedScrollView is not shown as ScrollView.
+     */
+    public static String getDisplayViewTypeName(ViewBean bean) {
+        if (bean == null) return "View";
+        String convert = bean.convert == null ? "" : bean.convert.trim();
+        int separator = convert.lastIndexOf('.');
+        String name = separator >= 0 ? convert.substring(separator + 1) : convert;
+        return switch (name) {
+            case "NestedScrollView" -> "NestedScrollView";
+            case "CoordinatorLayout" -> "CoordinatorLayout";
+            case "CollapsingToolbarLayout" -> "CollapsingToolbarLayout";
+            case "MaterialSwitch", "SwitchMaterial" -> "Switch";
+            case "MaterialCheckBox", "Chip" -> "CheckBox";
+            case "MaterialRadioButton" -> "RadioButton";
+            case "MaterialProgressIndicator", "CircularProgressIndicator", "LinearProgressIndicator", "LoadingIndicator" -> "ProgressBar";
+            case "Slider", "MaterialSlider" -> "SeekBar";
+            case "ExtendedFloatingActionButton", "MaterialIconButton", "MaterialButton" -> "MaterialButton";
+            case "MaterialTextView" -> "TextView";
+            case "TextInputEditText" -> "EditText";
+            case "ShapeableImageView", "ImageButton" -> "ImageView";
+            case "include" -> "include";
+            default -> {
+                String typeName = getViewTypeName(bean.type);
+                yield typeName == null || typeName.isEmpty() ? (name.isEmpty() ? "View" : name) : typeName;
+            }
+        };
+    }
+
+    /** Returns the existing Sketchware category icon, with precise icons for newer containers. */
+    public static int getViewTypeResId(ViewBean bean) {
+        if (bean == null) return R.drawable.ic_mtrl_devices;
+        String convert = bean.convert == null ? "" : bean.convert.trim();
+        int separator = convert.lastIndexOf('.');
+        String name = separator >= 0 ? convert.substring(separator + 1) : convert;
+        return switch (name) {
+            case "CoordinatorLayout" -> R.drawable.ic_palette_coordinator_layout;
+            case "NestedScrollView" -> R.drawable.ic_palette_nested_scroll_view;
+            // Keep the established CollapsingToolbarLayout artwork; it predates the M3 palette additions.
+            case "CollapsingToolbarLayout" -> R.drawable.ic_mtrl_collapsing_toolbar;
+            default -> getViewTypeResId(bean.type);
         };
     }
 

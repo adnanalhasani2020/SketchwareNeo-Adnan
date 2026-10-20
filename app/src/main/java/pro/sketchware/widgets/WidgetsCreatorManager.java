@@ -56,14 +56,28 @@ public class WidgetsCreatorManager {
     private final String widgetExportDirectoryPath = widgetResourcesDirectoryPath + "export/";
     private final ArrayList<String> allCategories = new ArrayList<>();
     private final ArrayList<String> mainCategories = new ArrayList<>(Arrays.asList(
-            "Layouts", "AndroidX", "Widgets", "List", "Library", "Google", "Date & Time"
+            "Layouts", "AndroidX", "Widgets", "List", "Library", "Google", "Date & Time", "Material 3"
     ));
     private final List<String> availableWidgetsNames = Arrays.asList(
             "BottomNavigationView", "Button", "CardView", "CheckBox", "CodeView", "EditText", "GridView",
-            "HScrollView", "ImageView", "LinearLayout", "ListView", "MapView", "MaterialButton", "ProgressBar",
-            "RadioButton", "RecyclerView", "RelativeLayout", "ConstraintLayout", "ScrollView", "SeekBar", "Spinner", "Switch",
-            "SwipeRefreshLayout", "TabLayout", "TextInputLayout", "TextInputEditText", "MaterialSwitch",
-            "CircularProgressIndicator", "LinearProgressIndicator", "TextView", "VideoView", "ViewPager", "WebView"
+            "HScrollView", "ImageView", "LinearLayout", "ListView", "MapView",
+            "com.google.android.material.button.MaterialButton",
+            "com.google.android.material.textview.MaterialTextView",
+            "com.google.android.material.checkbox.MaterialCheckBox",
+            "com.google.android.material.radiobutton.MaterialRadioButton",
+            "com.google.android.material.card.MaterialCardView",
+            "com.google.android.material.button.MaterialButtonToggleGroup",
+            "com.google.android.material.textfield.MaterialAutoCompleteTextView",
+            "com.google.android.material.chip.Chip", "com.google.android.material.chip.ChipGroup",
+            "com.google.android.material.slider.Slider",
+            "com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton",
+            "com.google.android.material.imageview.ShapeableImageView",
+            "ProgressBar", "RadioButton", "RecyclerView", "RelativeLayout", "ConstraintLayout", "ScrollView", "SeekBar", "Spinner", "Switch",
+            "SwipeRefreshLayout", "TabLayout",
+            "com.google.android.material.textfield.TextInputLayout",
+            "com.google.android.material.textfield.TextInputEditText",
+            "com.google.android.material.materialswitch.MaterialSwitch",
+            "TextView", "VideoView", "ViewPager", "WebView"
     );
     private final List<String> availableWidgetsTypes = new ArrayList<>();
     private final ViewEditor viewEditor;
@@ -200,7 +214,26 @@ public class WidgetsCreatorManager {
         binding.widgetType.setLongClickable(false);
         binding.addWidgetTo.setLongClickable(false);
 
-        binding.widgetType.setOnClickListener(v -> showTypeViewSelectorDialog(availableWidgetsNames, availableWidgetsTypes, binding.widgetType));
+        // A saved Material type remains visible to the editor, but cannot be re-selected or changed
+        // while Material 3 is disabled. It is not removed from widgets.json.
+        String editingType = Objects.requireNonNull(binding.widgetType.getText()).toString().trim();
+        boolean editingMaterialWidget = isEditing && isMaterial3Widget(widgetConfigurationsList.get(position));
+        boolean lockedDisabledMaterialType = editingMaterialWidget && !viewEditorFragment.isMaterial3Enabled();
+        binding.widgetType.setEnabled(!lockedDisabledMaterialType);
+        binding.widgetType.setOnClickListener(v -> {
+            if (lockedDisabledMaterialType) {
+                SketchwareUtil.toast("Enable Material 3 in this project to edit this component type.");
+                return;
+            }
+            ArrayList<String> selectableNames = new ArrayList<>();
+            ArrayList<String> selectableTypes = new ArrayList<>();
+            for (String widgetName : availableWidgetsNames) {
+                if (isMaterial3WidgetName(widgetName) && !viewEditorFragment.isMaterial3Enabled()) continue;
+                selectableNames.add(widgetName);
+                selectableTypes.add(String.valueOf(ViewBean.getViewTypeByTypeName(widgetName)));
+            }
+            showTypeViewSelectorDialog(selectableNames, selectableTypes, binding.widgetType);
+        });
         binding.addWidgetTo.setOnClickListener(v -> {
             List<String> types = new ArrayList<>(allCategories);
             showCategorySelectorDialog(types, binding.addWidgetTo);
@@ -236,7 +269,18 @@ public class WidgetsCreatorManager {
                 map.put("title", widgetTitle);
                 map.put("name", widgetName);
                 map.put("inject", widgetInject);
-                map.put("type", Integer.parseInt(widgetType));
+                try {
+                    map.put("type", Integer.parseInt(widgetType));
+                } catch (NumberFormatException exception) {
+                    binding.inputType.setError("Widget type must be a valid numeric type ID.");
+                    return;
+                }
+                boolean wasMaterial3Widget = isEditing && isMaterial3Widget(widgetConfigurationsList.get(position));
+                if (!viewEditorFragment.isMaterial3Enabled() && isMaterial3Widget(map) && !wasMaterial3Widget) {
+                    SketchwareUtil.toastError("Enable Material 3 in this project before adding Material 3 components.");
+                    return;
+                }
+
                 if (isEditing) {
                     map.put("position", position);
                     widgetConfigurationsList.set(position, map);
@@ -444,6 +488,7 @@ public class WidgetsCreatorManager {
         for (HashMap<String, Object> map : widgetConfigurationsList) {
             try {
                 if (Objects.requireNonNull(map.get("Class")).toString().equals(title)) {
+                    if (isMaterial3Widget(map) && !viewEditorFragment.isMaterial3Enabled()) continue;
                     Object typeObj = map.get("type");
                     if (typeObj instanceof Double) {
                         map.put("type", ((Double) typeObj).intValue());
@@ -462,12 +507,49 @@ public class WidgetsCreatorManager {
         if (!myArrayListCopy.isEmpty()) {
             try {
                 for (String item : myArrayListCopy) {
-                    viewEditor.paletteWidget.extraTitle(item, 1);
-                    addWidgetsByTitle(item);
+                    boolean hasVisibleWidget = false;
+                    for (HashMap<String, Object> map : widgetConfigurationsList) {
+                        if (item.equals(String.valueOf(map.get("Class")))
+                                && (viewEditorFragment.isMaterial3Enabled() || !isMaterial3Widget(map))) {
+                            hasVisibleWidget = true;
+                            break;
+                        }
+                    }
+                    if (hasVisibleWidget) {
+                        viewEditor.paletteWidget.extraTitle(item, 1);
+                        addWidgetsByTitle(item);
+                    }
                 }
             } catch (Exception ignored) {
             }
         }
+    }
+
+    private boolean isMaterial3WidgetName(String rawName) {
+        if (rawName == null) return false;
+        String name = rawName.trim();
+        if (name.contains(".")) name = name.substring(name.lastIndexOf('.') + 1);
+        return name.equals("MaterialButton") || name.equals("MaterialIconButton")
+                || name.equals("MaterialTextView") || name.equals("TextInputEditText")
+                || name.equals("MaterialAutoCompleteTextView") || name.equals("MaterialSwitch")
+                || name.equals("SwitchMaterial") || name.equals("MaterialCheckBox")
+                || name.equals("MaterialRadioButton") || name.equals("MaterialCardView")
+                || name.equals("MaterialButtonToggleGroup") || name.equals("MaterialProgressIndicator") || name.equals("CircularProgressIndicator")
+                || name.equals("LinearProgressIndicator") || name.equals("LoadingIndicator")
+                || name.equals("TextInputLayout") || name.equals("Chip") || name.equals("ChipGroup") || name.equals("Slider")
+                || name.equals("MaterialSlider") || name.equals("ExtendedFloatingActionButton")
+                || name.equals("ShapeableImageView");
+    }
+
+    private boolean isMaterial3Widget(HashMap<String, Object> widget) {
+        if (widget == null) return false;
+        if (isMaterial3WidgetName(String.valueOf(widget.get("name")))
+                || isMaterial3WidgetName(String.valueOf(widget.get("title")))) return true;
+        Object type = widget.get("type");
+        if (type instanceof Number && ((Number) type).intValue() == mod.agus.jcoderz.beans.ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON) {
+            return true;
+        }
+        return false;
     }
 
     public void showActionsDialog(int tag) {

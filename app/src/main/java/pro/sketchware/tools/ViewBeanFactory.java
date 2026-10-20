@@ -26,21 +26,26 @@ public class ViewBeanFactory {
     }
 
     public static int getConsideredTypeViewByName(String name, int def) {
-        return switch (name) {
-            case "ConstraintLayout", "androidx.constraintlayout.widget.ConstraintLayout" -> ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT;
-            case "androidx.coordinatorlayout.widget.CoordinatorLayout" -> ViewBean.VIEW_TYPE_LAYOUT_LINEAR;
+        if (name == null || name.trim().isEmpty()) return def;
+        String normalizedName = name.trim();
+        String simpleName = normalizedName.substring(normalizedName.lastIndexOf('.') + 1);
+        return switch (simpleName) {
+            case "ConstraintLayout" -> ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT;
+            case "CoordinatorLayout" -> ViewBean.VIEW_TYPE_LAYOUT_LINEAR;
             case "MaterialSwitch", "SwitchMaterial" -> ViewBean.VIEW_TYPE_WIDGET_SWITCH;
             case "MaterialCardView", "CardView" -> ViewBeans.VIEW_TYPE_LAYOUT_CARDVIEW;
             case "TextInputEditText" -> ViewBean.VIEW_TYPE_WIDGET_EDITTEXT;
-            case "TextInputLayout" -> ViewBean.VIEW_TYPE_LAYOUT_LINEAR;
-            case "MaterialButton", "ExtendedFloatingActionButton" -> ViewBean.VIEW_TYPE_WIDGET_BUTTON;
+            case "MaterialAutoCompleteTextView" -> ViewBeans.VIEW_TYPE_WIDGET_AUTOCOMPLETETEXTVIEW;
+            case "TextInputLayout" -> ViewBeans.VIEW_TYPE_LAYOUT_TEXTINPUTLAYOUT;
+            case "MaterialButton", "MaterialIconButton", "ExtendedFloatingActionButton" -> ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON;
+            case "MaterialButtonToggleGroup", "ChipGroup" -> ViewBeans.VIEW_TYPE_LAYOUT_RADIOGROUP;
             case "MaterialTextView" -> ViewBean.VIEW_TYPE_WIDGET_TEXTVIEW;
             case "MaterialCheckBox", "Chip" -> ViewBean.VIEW_TYPE_WIDGET_CHECKBOX;
             case "ImageButton", "ShapeableImageView" -> ViewBean.VIEW_TYPE_WIDGET_IMAGEVIEW;
             case "NestedScrollView" -> ViewBean.VIEW_TYPE_LAYOUT_VSCROLLVIEW;
             case "MaterialRadioButton" -> ViewBeans.VIEW_TYPE_WIDGET_RADIOBUTTON;
             case "Slider", "MaterialSlider" -> ViewBean.VIEW_TYPE_WIDGET_SEEKBAR;
-            case "CircularProgressIndicator", "LinearProgressIndicator", "LoadingIndicator" -> ViewBean.VIEW_TYPE_WIDGET_PROGRESSBAR;
+            case "MaterialProgressIndicator", "CircularProgressIndicator", "LinearProgressIndicator", "LoadingIndicator" -> ViewBean.VIEW_TYPE_WIDGET_PROGRESSBAR;
             case "AutoCompleteTextView" -> ViewBeans.VIEW_TYPE_WIDGET_AUTOCOMPLETETEXTVIEW;
             default -> def;
         };
@@ -93,16 +98,40 @@ public class ViewBeanFactory {
         return false;
     }
 
+    private static boolean isMaterialProgressIndicator(ViewBean bean) {
+        String convert = bean == null ? "" : bean.convert;
+        if (convert == null) return false;
+        int dot = convert.lastIndexOf('.');
+        String simpleName = dot >= 0 ? convert.substring(dot + 1) : convert;
+        return simpleName.equals("CircularProgressIndicator")
+                || simpleName.equals("LinearProgressIndicator")
+                || simpleName.equals("LoadingIndicator");
+    }
+
     public void applyAttributes(Map<String, String> attributes) {
         Map<String, String> injectAttributes = new LinkedHashMap<>();
         
         if ("include".equals(bean.convert)) {
             StringBuilder injectProperty = new StringBuilder();
             for (Map.Entry<String, String> entry : attributes.entrySet()) {
-                var attrName = entry.getKey();
-                var attrValue = entry.getValue();
-                if (attrName.equals("layout") || attrName.equals("android:id")) {
-                    continue; // Skip layout and ID so they don't get double injected into the inject property.
+                String attrName = entry.getKey();
+                String attrValue = entry.getValue();
+                if ("layout".equals(attrName) || "android:id".equals(attrName)) {
+                    continue;
+                }
+                if ("android:layout_width".equals(attrName) || "android:layout_height".equals(attrName)) {
+                    String enumValue = getEnum(attrName.substring("android:".length()), attrValue, null);
+                    String resolvedSize = enumValue == null ? resolveDimenSize(attrValue) : enumValue;
+                    if (resolvedSize != null) {
+                        try {
+                            int size = Integer.parseInt(resolvedSize);
+                            if ("android:layout_width".equals(attrName)) bean.layout.width = size;
+                            else bean.layout.height = size;
+                            continue;
+                        } catch (NumberFormatException ignored) {
+                            // Preserve a valid but non-numeric resource expression below.
+                        }
+                    }
                 }
                 injectProperty
                         .append(attrName)
@@ -112,16 +141,21 @@ public class ViewBeanFactory {
                         .append("\n");
             }
             bean.inject = injectProperty.toString().trim();
-            
-            if (attributes.containsKey("layout")) {
-                bean.customView = attributes.get("layout").replace("@layout/", "");
+
+            String targetLayout = attributes.get("layout");
+            if (targetLayout != null) {
+                targetLayout = targetLayout.trim();
+                if (targetLayout.startsWith("@layout/")) {
+                    targetLayout = targetLayout.substring("@layout/".length());
+                } else {
+                    targetLayout = parseReferName(targetLayout, "/");
+                }
+                bean.customView = targetLayout.replaceFirst("\\.xml$", "");
             }
-            
-            // Re-apply correct ID for native parsing
+
             if (attributes.containsKey("android:id")) {
-                 bean.id = parseReferName(attributes.get("android:id"), "/");
+                bean.id = parseReferName(attributes.get("android:id"), "/");
             }
-            
             return;
         }
 
@@ -365,13 +399,19 @@ public class ViewBeanFactory {
                 if (bean.type == ViewBean.VIEW_TYPE_WIDGET_PROGRESSBAR) {
                     var style = attributes.getOrDefault("style", null);
                     if (style != null) {
-                        if (style.equals(ViewBean.PROGRESSBAR_STYLE_HORIZONTAL)) {
+                        if (isMaterialProgressIndicator(bean)) {
+                            // Material indicators use theme styles, not the platform ProgressBar style enum.
+                            injectAttributes.put("style", style);
+                            bean.progressStyle = "None";
+                        } else if (style.equals(ViewBean.PROGRESSBAR_STYLE_HORIZONTAL)) {
                             bean.progressStyle = ViewBean.PROGRESSBAR_STYLE_HORIZONTAL;
                         } else if (style.equals(ViewBean.PROGRESSBAR_STYLE_CIRCLE)) {
                             bean.progressStyle = ViewBean.PROGRESSBAR_STYLE_CIRCLE;
                         } else {
-                            injectAttributes.put("style", ViewBean.PROGRESSBAR_STYLE_HORIZONTAL);
+                            injectAttributes.put("style", style);
                         }
+                    } else if (isMaterialProgressIndicator(bean)) {
+                        bean.progressStyle = "None";
                     }
 
                     var indeterminate = attributes.getOrDefault("android:indeterminate", null);

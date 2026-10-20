@@ -21,6 +21,7 @@ import com.besome.sketch.design.DesignActivity;
 import com.besome.sketch.editor.LogicEditorActivity;
 import com.besome.sketch.editor.PropertyActivity;
 import com.besome.sketch.editor.view.DraggingListener;
+import com.besome.sketch.editor.view.ItemView;
 import com.besome.sketch.editor.view.ViewEditor;
 import com.besome.sketch.editor.view.ViewProperty;
 import com.besome.sketch.editor.view.palette.PaletteWidget;
@@ -82,6 +83,7 @@ public class ViewEditorFragment extends qA {
         });
         viewProperty.setOnEventClickListener(eventBean -> toLogicEditorActivity(eventBean.targetId, eventBean.eventName, eventBean.eventName));
         viewProperty.setOnPropertyTargetChangeListener(viewEditor::updateSelection);
+        viewProperty.setOnViewMoveListener(this::moveViewInTree);
         viewEditor.setOnWidgetSelectedListener(new cy() {
             @Override
             public void a() {
@@ -160,6 +162,103 @@ public class ViewEditorFragment extends qA {
         viewProperty.e();
     }
 
+    private boolean moveViewInTree(String sourceId, String targetParentId) {
+        if (sourceId == null || targetParentId == null || sourceId.equals(targetParentId)
+                || sourceId.startsWith("_") || projectFileBean == null || sc_id == null) return false;
+        ArrayList<ViewBean> beans;
+        try {
+            beans = jC.a(sc_id).d(projectFileBean.getXmlName());
+        } catch (RuntimeException exception) {
+            SketchwareUtil.toastError("Unable to load the view tree");
+            return false;
+        }
+        if (beans == null) return false;
+        ViewBean source = null;
+        ViewBean target = null;
+        for (ViewBean bean : beans) {
+            if (bean == null) continue;
+            if (sourceId.equals(bean.id)) source = bean;
+            if (targetParentId.equals(bean.id)) target = bean;
+        }
+        if (source == null || target == null || !isTreeContainer(target)) return false;
+
+        // Reject cycles by walking the target's ancestor chain before mutating the project model.
+        String cursorId = target.id;
+        java.util.HashSet<String> visited = new java.util.HashSet<>();
+        while (cursorId != null && !cursorId.isEmpty() && !"root".equals(cursorId)) {
+            if (source.id.equals(cursorId)) {
+                SketchwareUtil.toastError("A view cannot be moved into itself or its own child");
+                return false;
+            }
+            if (!visited.add(cursorId)) {
+                SketchwareUtil.toastError("The current view hierarchy contains a parent cycle");
+                return false;
+            }
+            ViewBean parent = null;
+            for (ViewBean candidate : beans) {
+                if (candidate != null && cursorId.equals(candidate.id)) { parent = candidate; break; }
+            }
+            cursorId = parent == null ? null : parent.parent;
+        }
+
+        String previousParent = source.parent;
+        int previousIndex = source.index;
+        int previousParentType = source.parentType;
+        String previousPreParent = source.preParent;
+        int previousPreIndex = source.preIndex;
+        int previousPreParentType = source.preParentType;
+        java.util.HashMap<String, String> previousParentAttributes = source.parentAttributes == null
+                ? new java.util.HashMap<>() : new java.util.HashMap<>(source.parentAttributes);
+
+        int nextIndex = 0;
+        for (ViewBean bean : beans) {
+            if (bean != null && !source.id.equals(bean.id) && target.id.equals(bean.parent)) {
+                nextIndex = Math.max(nextIndex, bean.index + 1);
+            }
+        }
+        source.preParent = previousParent == null || previousParent.isEmpty() ? "root" : previousParent;
+        source.preIndex = previousIndex;
+        source.preParentType = previousParentType;
+        source.parent = target.id;
+        source.parentType = target.type;
+        source.index = nextIndex;
+        source.parentAttributes = source.parentAttributes == null ? new java.util.HashMap<>() : source.parentAttributes;
+        if (!target.id.equals(previousParent)) source.parentAttributes.clear();
+
+        ItemView moved = viewEditor.b(source, true);
+        if (moved == null) {
+            source.parent = previousParent;
+            source.index = previousIndex;
+            source.parentType = previousParentType;
+            source.preParent = previousPreParent;
+            source.preIndex = previousPreIndex;
+            source.preParentType = previousPreParentType;
+            source.parentAttributes = previousParentAttributes;
+            viewEditor.b(source, false);
+            SketchwareUtil.toastError("The canvas could not apply this move");
+            return false;
+        }
+        viewEditor.a(moved, true);
+        n();
+        viewProperty.a(source.id);
+        viewProperty.e();
+        invalidateOptionsMenu();
+        return true;
+    }
+
+    private boolean isTreeContainer(ViewBean bean) {
+        if (bean == null || bean.convert == null) return false;
+        String name = bean.convert.substring(bean.convert.lastIndexOf('.') + 1);
+        return switch (name) {
+            case "LinearLayout", "RelativeLayout", "ConstraintLayout", "CoordinatorLayout", "FrameLayout",
+                 "ScrollView", "NestedScrollView", "HorizontalScrollView", "RadioGroup", "TableLayout",
+                 "TableRow", "GridLayout", "CardView", "MaterialCardView", "CollapsingToolbarLayout",
+                 "TextInputLayout", "SwipeRefreshLayout", "TabLayout", "BottomNavigationView", "ChipGroup",
+                 "MaterialButtonToggleGroup", "ViewPager", "ViewPager2", "RecyclerView", "ListView", "GridView" -> true;
+            default -> false;
+        };
+    }
+
     private void toLogicEditorActivity(String eventId, String eventName, String eventName2) {
         Intent intent = new Intent(requireContext(), LogicEditorActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -233,6 +332,18 @@ public class ViewEditorFragment extends qA {
         viewEditor.extraWidgetLayout("", "RelativeLayout");
         
         viewEditor.extraWidgetLayout("", "ConstraintLayout");
+        viewEditor.extraWidgetLayout("", "CoordinatorLayout");
+        // <include> needs an existing layout resource; seed it with a valid current project layout.
+        if (sc_id != null) {
+            try {
+                var activityLayouts = jC.b(sc_id).c();
+                if (activityLayouts != null && !activityLayouts.isEmpty()) {
+                    viewEditor.extraWidgetLayout("", "include", activityLayouts.get(0).fileName);
+                }
+            } catch (Exception e) {
+                mod.jbk.util.LogUtil.e("ViewEditorFragment", "Unable to register include palette item", e);
+            }
+        }
         
         widgetsCreatorManager.addWidgetsByTitle("Layouts");
 
@@ -240,8 +351,8 @@ public class ViewEditorFragment extends qA {
         viewEditor.extraWidgetLayout("", "TabLayout");
         viewEditor.extraWidgetLayout("", "BottomNavigationView");
         viewEditor.extraWidgetLayout("", "CollapsingToolbarLayout");
+        viewEditor.extraWidgetLayout("", "NestedScrollView");
         viewEditor.extraWidgetLayout("", "CardView");
-        viewEditor.extraWidgetLayout("", "TextInputLayout");
         viewEditor.extraWidgetLayout("", "SwipeRefreshLayout");
         widgetsCreatorManager.addWidgetsByTitle("AndroidX");
 
@@ -295,15 +406,37 @@ public class ViewEditorFragment extends qA {
 
         // Material widgets are intentionally hidden unless Material 3 is enabled
         // for this project. This avoids adding classes whose dependency/theme is absent.
-        if (sc_id != null && new Material3LibraryManager(sc_id).isMaterial3Enabled()) {
+        if (isMaterial3Enabled()) {
             viewEditor.paletteWidget.extraTitle("Material 3", 1);
             viewEditor.extraWidget("", "MaterialButton", "MaterialButton");
+            viewEditor.extraWidget("", "MaterialIconButton", "MaterialIconButton");
+            viewEditor.extraWidget("", "MaterialTextView", "MaterialTextView");
             viewEditor.extraWidget("", "TextInputEditText", "TextInputEditText");
+            viewEditor.extraWidget("", "MaterialAutoCompleteTextView", "MaterialAutoCompleteTextView");
             viewEditor.extraWidget("", "MaterialSwitch", "MaterialSwitch");
-            viewEditor.extraWidget("", "CircularProgressIndicator", "CircularProgressIndicator");
-            viewEditor.extraWidget("", "LinearProgressIndicator", "LinearProgressIndicator");
+            viewEditor.extraWidget("", "MaterialCheckBox", "MaterialCheckBox");
+            viewEditor.extraWidget("", "MaterialRadioButton", "MaterialRadioButton");
+            viewEditor.extraWidget("", "Chip", "Chip");
+            viewEditor.extraWidget("", "MaterialProgressIndicator", "MaterialProgressIndicator");
+            viewEditor.extraWidget("", "Slider", "Slider");
+            viewEditor.extraWidget("", "ExtendedFloatingActionButton", "ExtendedFloatingActionButton");
+            viewEditor.extraWidget("", "ShapeableImageView", "ShapeableImageView");
+            // Layout containers live in the layout palette, with their own M3 heading.
+            viewEditor.paletteWidget.extraTitle("M3 Layouts", 0);
+            viewEditor.extraWidgetLayout("", "TextInputLayout");
+            viewEditor.extraWidgetLayout("", "MaterialCardView");
+            viewEditor.extraWidgetLayout("", "MaterialButtonToggleGroup");
+            viewEditor.extraWidgetLayout("", "ChipGroup");
+        }
+        // User-defined Material 3 palette items share the same gated category as built-ins.
+        if (isMaterial3Enabled()) {
+            widgetsCreatorManager.addWidgetsByTitle("Material 3");
         }
         widgetsCreatorManager.addExtraClasses();
+    }
+
+    public boolean isMaterial3Enabled() {
+        return sc_id != null && new Material3LibraryManager(sc_id).isMaterial3Enabled();
     }
 
     private void startAnimation() {

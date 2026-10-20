@@ -1717,6 +1717,14 @@ ACTION_VIEW
     <string name="property_parent_attr">Parent attributes</string>
     <string name="property_progress">Progress</string>
     <string name="property_progressbar_style">Progress bar style</string>
+    <string name="property_material_progress_style">Material progress style</string>
+    <string name="property_material_progress_wavy">Wavy progress</string>
+    <string name="property_material_button_style">Material button style</string>
+    <string name="property_material_icon">Material icon resource</string>
+    <string name="property_material_icon_gravity">Icon gravity / orientation</string>
+    <string name="property_material_icon_size">Material icon size</string>
+    <string name="property_material_corner_radius">Material corner radius</string>
+    <string name="property_include_layout">Included layout</string>
     <string name="property_resource">Resource</string>
     <string name="property_rotate">Rotate</string>
     <string name="property_scale_type">Scale type</string>
@@ -2325,4 +2333,47 @@ Please try again later"</string>
     <string name="link_sw_assist">https://play.google.com/store/apps/details?id=com.w3wide.swassist</string>
 
 
+
+    <!-- Extended component-specific properties -->
+    <string name="property_material_slider_style">Material slider style</string>
+    <string name="property_material_slider_value_from">Slider minimum value</string>
+    <string name="property_material_slider_value_to">Slider maximum value</string>
+    <string name="property_material_slider_step_size">Slider step size</string>
+    <string name="property_material_slider_value">Slider value</string>
+    <string name="property_material_slider_thumb_radius">Slider thumb radius</string>
+    <string name="property_material_slider_track_height">Slider track height</string>
+    <string name="property_material_slider_halo_radius">Slider halo radius</string>
+    <string name="property_material_slider_label_behavior">Slider label behavior</string>
+    <string name="property_nested_scroll_fill_viewport">Fill viewport</string>
+    <string name="property_nested_scroll_nested_enabled">Nested scrolling enabled</string>
+    <string name="property_nested_scroll_clip_to_padding">Clip to padding</string>
+    <string name="property_nested_scroll_over_scroll_mode">Overscroll mode</string>
+    <string name="property_nested_scroll_behavior">Scrolling behavior</string>
+    <string name="property_nested_scroll_behavior_summary">Configure scrolling and edge effects</string>
+    <string name="property_nested_scroll_fill_viewport_desc">Expand the child to fill the viewport when it is smaller than the container.</string>
+    <string name="property_nested_scroll_nested_enabled_desc">Allow this view to participate in nested scrolling with parent containers.</string>
+    <string name="property_nested_scroll_clip_to_padding_desc">Clip child content to the padded area.</string>
+    <string name="property_nested_scroll_over_scroll_desc">Choose when edge overscroll effects are shown.</string>
+    <string name="property_nested_scroll_over_scroll_always">Always</string>
+    <string name="property_nested_scroll_over_scroll_if_content_scrolls">If content scrolls (Default)</string>
+    <string name="property_nested_scroll_over_scroll_never">Never</string>
+    <string name="property_material_progress_orientation">Indicator orientation</string>
+    <string name="property_material_progress_wavy_title">Wavy progress</string>
+    <string name="property_material_progress_wavy_desc">Use the Material 3 Expressive wavy indicator style.</string>
+    <string name="property_material_progress_circular">Circular</string>
+    <string name="property_material_progress_linear">Linear</string>
+    <string name="property_collapsing_title">Toolbar title</string>
+    <string name="property_collapsing_title_enabled">Title enabled</string>
+    <string name="property_collapsing_scrim_animation_duration">Scrim animation duration</string>
+    <string name="property_collapsing_scrim_visible_height_trigger">Scrim visible height trigger</string>
+    <string name="property_collapsing_expanded_title_margin_start">Expanded title margin start</string>
+    <string name="property_collapsing_expanded_title_margin_end">Expanded title margin end</string>
+    <string name="property_collapsing_expanded_title_margin_top">Expanded title margin top</string>
+    <string name="property_collapsing_expanded_title_margin_bottom">Expanded title margin bottom</string>
+    <string name="property_collapsing_toolbar_id">Toolbar ID</string>
+    <string name="property_collapsing_content_scrim">Content scrim</string>
+    <string name="property_collapsing_status_bar_scrim">Status bar scrim</string>
+    <string name="property_collapsing_title_collapse_mode">Title collapse mode</string>
+    <string name="property_collapsing_collapse_mode">Collapse mode</string>
+    <string name="property_collapsing_parallax_multiplier">Parallax multiplier</string>
 </resources>

@@ -57,6 +57,22 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
             "android:layout_alignBaseline"
     };
 
+    private static final String[] PARENT_COORDINATOR = {
+            "app:layout_anchor", "app:layout_anchorGravity", "app:layout_behavior",
+            "app:layout_dodgeInsetEdges", "app:layout_insetEdge", "app:layout_keyline"
+    };
+
+    private static final String[] PARENT_COLLAPSING = {
+            "app:layout_collapseMode"
+    };
+
+    private static final List<String> COORDINATOR_VALUES = Arrays.asList(
+            "app:layout_anchorGravity", "app:layout_behavior", "app:layout_dodgeInsetEdges",
+            "app:layout_insetEdge", "app:layout_keyline");
+
+    private static final List<String> COLLAPSING_VALUES = Arrays.asList(
+            "app:layout_collapseMode", "app:layout_collapseParallaxMultiplier");
+
     public static List<String> RELATIVE_IDS = Arrays.asList(
             "android:layout_alignStart", "android:layout_alignEnd",
             "android:layout_alignLeft", "android:layout_alignRight",
@@ -64,7 +80,8 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
             "android:layout_alignBaseline",
             "android:layout_toStartOf", "android:layout_toEndOf",
             "android:layout_toLeftOf", "android:layout_toRightOf",
-            "android:layout_above", "android:layout_below"
+            "android:layout_above", "android:layout_below",
+            "app:layout_anchor"
     );
 
     public static List<String> CONSTRAINT_IDS = Arrays.asList(
@@ -210,6 +227,26 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
         return false;
     }
 
+    private boolean isParentCoordinatorLayout() {
+        if (bean == null || bean.parent == null) return false;
+        for (ViewBean parent : beans) {
+            if (bean.parent.equals(parent.id)) {
+                return parent.convert != null && parent.convert.endsWith("CoordinatorLayout");
+            }
+        }
+        return false;
+    }
+
+    private boolean isParentCollapsingToolbarLayout() {
+        if (bean == null || bean.parent == null) return false;
+        for (ViewBean parent : beans) {
+            if (bean.parent.equals(parent.id)) {
+                return parent.convert != null && parent.convert.endsWith("CollapsingToolbarLayout");
+            }
+        }
+        return false;
+    }
+
     private void showParentAttributes() {
         BottomSheetDialog dialog = new BottomSheetDialog(getContext());
         var binding = PropertyPopupParentAttrBinding.inflate(LayoutInflater.from(getContext()));
@@ -230,7 +267,11 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
         adapter.submitList(keys);
 
         boolean isConstraint = isParentConstraintLayout();
-        String[] attributesToUse = isConstraint ? PARENT_CONSTRAINT : PARENT_RELATIVE;
+        boolean isCoordinator = isParentCoordinatorLayout();
+        boolean isCollapsing = isParentCollapsingToolbarLayout();
+        String[] attributesToUse = isCoordinator ? PARENT_COORDINATOR
+                : isCollapsing ? PARENT_COLLAPSING
+                : isConstraint ? PARENT_CONSTRAINT : PARENT_RELATIVE;
 
         binding.add.setOnClickListener(v -> {
             List<String> list = new ArrayList<>();
@@ -240,7 +281,9 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
                 }
             }
             new MaterialAlertDialogBuilder(getContext())
-                    .setTitle(isConstraint ? "Choose a Constraint" : "Choose an Attribute")
+                    .setTitle(isCoordinator ? "Choose CoordinatorLayout attribute"
+                            : isCollapsing ? "Choose CollapsingToolbar attribute"
+                            : isConstraint ? "Choose a Constraint" : "Choose an Attribute")
                     .setAdapter(
                             new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, list), (d, w) -> {
                                 var attr = list.get(w);
@@ -275,22 +318,37 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
                                             })
                                             .setNegativeButton("Cancel", (d2, which) -> d.dismiss())
                                             .show();
-                                } else if (CONSTRAINT_VALUES.contains(attr)) {
-                                    MaterialAlertDialogBuilder inputDialog = new MaterialAlertDialogBuilder(getContext());
-                                    inputDialog.setTitle("Enter value for " + attr);
-                                    PropertyPopupInputTextBinding inputBinding = PropertyPopupInputTextBinding.inflate(LayoutInflater.from(getContext()));
-                                    inputBinding.tiInput.setHint("Value (e.g. 0.5, 16:9, etc)");
-                                    inputDialog.setView(inputBinding.getRoot());
-                                    inputDialog.setPositiveButton("Save", (d2, w2) -> {
-                                        String text = inputBinding.edInput.getText().toString().trim();
-                                        if (!text.isEmpty()) {
-                                            value.put(attr, text);
-                                            if (valueChangeListener != null) valueChangeListener.a(key, value);
-                                            adapter.submitList(new ArrayList<>(value.keySet()));
-                                        }
-                                    });
-                                    inputDialog.setNegativeButton("Cancel", null);
-                                    inputDialog.show();
+                                } else if (CONSTRAINT_VALUES.contains(attr) || COORDINATOR_VALUES.contains(attr)
+                                        || COLLAPSING_VALUES.contains(attr)) {
+                                    if ("app:layout_collapseMode".equals(attr)) {
+                                        String[] options = {"none", "pin", "parallax"};
+                                        new MaterialAlertDialogBuilder(getContext())
+                                                .setTitle("Collapse mode")
+                                                .setItems(options, (whichDialog, which) -> {
+                                                    value.put(attr, options[which]);
+                                                    if (valueChangeListener != null) valueChangeListener.a(key, value);
+                                                    adapter.submitList(new ArrayList<>(value.keySet()));
+                                                })
+                                                .setNegativeButton("Cancel", null)
+                                                .show();
+                                    } else {
+                                        MaterialAlertDialogBuilder inputDialog = new MaterialAlertDialogBuilder(getContext());
+                                        inputDialog.setTitle("Enter value for " + attr);
+                                        PropertyPopupInputTextBinding inputBinding = PropertyPopupInputTextBinding.inflate(LayoutInflater.from(getContext()));
+                                        inputBinding.tiInput.setHint("Enter the XML value");
+                                        inputDialog.setView(inputBinding.getRoot());
+                                        if (value.containsKey(attr)) inputBinding.edInput.setText(value.get(attr));
+                                        inputDialog.setPositiveButton("Save", (d2, w2) -> {
+                                            String text = inputBinding.edInput.getText().toString().trim();
+                                            if (!text.isEmpty()) {
+                                                value.put(attr, text);
+                                                if (valueChangeListener != null) valueChangeListener.a(key, value);
+                                                adapter.submitList(new ArrayList<>(value.keySet()));
+                                            }
+                                        });
+                                        inputDialog.setNegativeButton("Cancel", null);
+                                        inputDialog.show();
+                                    }
                                 } else {
                                     value.put(attr, "false");
                                     if (valueChangeListener != null)
@@ -326,7 +384,7 @@ public class PropertyAttributesItem extends LinearLayout implements View.OnClick
             String item = getItem(position);
             if (RELATIVE_IDS.contains(item) || CONSTRAINT_IDS.contains(item)) {
                 return 1;
-            } else if (CONSTRAINT_VALUES.contains(item)) {
+            } else if (CONSTRAINT_VALUES.contains(item) || COORDINATOR_VALUES.contains(item) || COLLAPSING_VALUES.contains(item)) {
                 return 2;
             } else {
                 return 0;

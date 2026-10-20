@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
@@ -145,13 +146,43 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
             case "property_scale_y" -> b(property, String.valueOf(bean.scaleY));
             case "property_spinner_mode" -> c(property, bean.spinnerMode);
             case "property_divider_height" -> d(property, bean.dividerHeight);
-            case "property_custom_view_listview" -> a(property, bean.customView);
+            case "property_custom_view_listview", "property_include_layout" -> a(property, bean.customView);
             case "property_checked" -> e(property, bean.checked);
             case "property_max" -> b(property, String.valueOf(bean.max));
             case "property_progress" -> b(property, String.valueOf(bean.progress));
             case "property_first_day_of_week" -> c(property, bean.firstDayOfWeek);
             case "property_ad_size" -> d(property, bean.adSize);
             case "property_progressbar_style" -> c(property, bean.progressStyle);
+            case "property_material_progress_style" -> c(property, getMaterialProgressStyleSummary(bean));
+            case "property_material_button_style" -> c(property, getMaterialButtonStyle(bean));
+            case "property_material_icon_gravity" -> c(property, getMaterialIconGravity(bean));
+            case "property_material_icon" -> b(property, getInjectedAttr(bean, "app:icon"));
+            case "property_material_icon_size" -> b(property, getInjectedAttr(bean, "app:iconSize"));
+            case "property_material_corner_radius" -> b(property, getInjectedAttr(bean, "app:cornerRadius"));
+            case "property_material_slider_style" -> c(property, getInjectedAttrOrDefault(bean, "style", "default"));
+            case "property_material_slider_value_from" -> b(property, getInjectedAttrOrDefault(bean, "android:valueFrom", "0"));
+            case "property_material_slider_value_to" -> b(property, getInjectedAttrOrDefault(bean, "android:valueTo", "100"));
+            case "property_material_slider_step_size" -> b(property, getInjectedAttrOrDefault(bean, "android:stepSize", "0"));
+            case "property_material_slider_value" -> b(property, getInjectedAttrOrDefault(bean, "android:value", "0"));
+            case "property_material_slider_thumb_radius" -> b(property, getInjectedAttr(bean, "app:thumbRadius"));
+            case "property_material_slider_track_height" -> b(property, getInjectedAttr(bean, "app:trackHeight"));
+            case "property_material_slider_halo_radius" -> b(property, getInjectedAttr(bean, "app:haloRadius"));
+            case "property_material_slider_label_behavior" -> c(property, getInjectedAttrOrDefault(bean, "app:labelBehavior", "floating"));
+            case "property_nested_scroll_behavior" -> b(property, getNestedScrollBehaviorSummary(bean));
+            case "property_collapsing_title" -> b(property, getInjectedAttr(bean, "app:title"));
+            case "property_collapsing_title_enabled" -> e(property, !"false".equals(getInjectedAttr(bean, "app:titleEnabled")) ? 1 : 0);
+            case "property_collapsing_scrim_animation_duration" -> b(property, getInjectedAttrOrDefault(bean, "app:scrimAnimationDuration", "600"));
+            case "property_collapsing_scrim_visible_height_trigger" -> b(property, getInjectedAttr(bean, "app:scrimVisibleHeightTrigger"));
+            case "property_collapsing_expanded_title_margin_start" -> b(property, getInjectedAttr(bean, "app:expandedTitleMarginStart"));
+            case "property_collapsing_expanded_title_margin_end" -> b(property, getInjectedAttr(bean, "app:expandedTitleMarginEnd"));
+            case "property_collapsing_expanded_title_margin_top" -> b(property, getInjectedAttr(bean, "app:expandedTitleMarginTop"));
+            case "property_collapsing_expanded_title_margin_bottom" -> b(property, getInjectedAttr(bean, "app:expandedTitleMarginBottom"));
+            case "property_collapsing_toolbar_id" -> b(property, getInjectedAttr(bean, "app:toolbarId"));
+            case "property_collapsing_content_scrim" -> b(property, getInjectedAttr(bean, "app:contentScrim"));
+            case "property_collapsing_status_bar_scrim" -> b(property, getInjectedAttr(bean, "app:statusBarScrim"));
+            case "property_collapsing_title_collapse_mode" -> c(property, getInjectedAttrOrDefault(bean, "app:titleCollapseMode", "scale"));
+            case "property_collapsing_parallax_multiplier" -> b(property,
+                    bean.parentAttributes == null ? "0.5" : bean.parentAttributes.getOrDefault("app:layout_collapseParallaxMultiplier", "0.5"));
             case "property_indeterminate" -> d(property, bean.indeterminate);
             case "property_inject" -> b(property, bean.inject);
             case "property_convert" -> b(property, bean.convert, String.valueOf(bean.type));
@@ -275,6 +306,16 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         if (d != null) {
             ViewBean cloned = c.clone();
             i(c);
+            // Property editors are applied in i(c). If the user explicitly enters a
+            // property-backed attribute in Custom attributes, reapply that explicit value
+            // last so it wins in generated XML instead of being silently overwritten.
+            View view = f.get("property_inject");
+            if (view instanceof PropertyInputItem inputItem) {
+                LinkedHashMap<String, String> overrides = inputItem.getExplicitPropertyAttributeOverrides();
+                for (Map.Entry<String, String> override : overrides.entrySet()) {
+                    c.inject = setInjectedAttr(c, override.getKey(), override.getValue());
+                }
+            }
             if (!b) {
                 cC.c(sc_id).a(e.getXmlName(), cloned, c.clone());
                 d.a(c);
@@ -318,6 +359,47 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         inputItem.setBean(c);
 
         addView(inputItem);
+    }
+
+    private String normalizeNumericValue(String rawValue) {
+        if (rawValue == null) return "";
+        String value = rawValue.trim();
+        if (value.isEmpty()) return "";
+        try {
+            Float.parseFloat(value);
+            return value;
+        } catch (NumberFormatException ignored) {
+            return "";
+        }
+    }
+
+    private String normalizeIntegerValue(String rawValue) {
+        if (rawValue == null || rawValue.trim().isEmpty()) return "";
+        try {
+            return String.valueOf(Math.max(0, Integer.parseInt(rawValue.trim())));
+        } catch (NumberFormatException ignored) {
+            return "";
+        }
+    }
+
+    private String normalizeIdReference(String rawValue) {
+        if (rawValue == null) return "";
+        String value = rawValue.trim();
+        if (value.isEmpty() || value.equals("@null")) return "";
+        if (value.startsWith("@id/") || value.startsWith("@+id/")) return value;
+        if (value.matches("[A-Za-z_][A-Za-z0-9_]*")) return "@id/" + value;
+        return "";
+    }
+
+    private String normalizeMaterialDimension(String rawValue) {
+        if (rawValue == null) return "";
+        String value = rawValue.trim();
+        if (value.isEmpty()) return "";
+        if (value.matches("[0-9]+(?:\\.[0-9]+)?")) return value + "dp";
+        if (value.matches("[0-9]+(?:\\.[0-9]+)?(?:dp|sp|px)")) return value;
+        if (value.matches("@[a-zA-Z0-9_.]+/[a-zA-Z0-9_.]+") || value.matches("\\?attr/[a-zA-Z0-9_]+")) return value;
+        // Never write arbitrary user text as a resource dimension into Android XML.
+        return "";
     }
 
     public void save() {
@@ -399,6 +481,155 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         return value == null ? "" : value;
     }
 
+    private String getMaterialProgressStyle(ViewBean bean) {
+        String convert = bean == null || bean.convert == null ? "" : bean.convert;
+        return convert.endsWith("LinearProgressIndicator") ? "Linear" : "Circular";
+    }
+
+    private String getMaterialProgressStyleSummary(ViewBean bean) {
+        return getMaterialProgressStyle(bean) + (isMaterialProgressWavy(bean) ? " · Wavy" : "");
+    }
+
+    private String getNestedScrollBehaviorSummary(ViewBean bean) {
+        String viewport = "true".equalsIgnoreCase(getInjectedAttr(bean, "android:fillViewport")) ? "Viewport" : "Viewport off";
+        String nested = "false".equalsIgnoreCase(getInjectedAttr(bean, "android:nestedScrollingEnabled")) ? "Nested off" : "Nested";
+        String clip = "false".equalsIgnoreCase(getInjectedAttr(bean, "android:clipToPadding")) ? "Clip off" : "Clip";
+        String overscroll = getInjectedAttrOrDefault(bean, "android:overScrollMode", "ifContentScrolls");
+        String mode = switch (overscroll) {
+            case "always" -> "Always";
+            case "never" -> "Never";
+            default -> "If content scrolls";
+        };
+        return viewport + " · " + nested + " · " + clip + " · " + mode;
+    }
+
+    private void applyNestedScrollBehavior(ViewBean bean, String config) {
+        if (bean == null || config == null || !config.contains("|")) return;
+        String[] parts = config.split("\\|", -1);
+        if (parts.length != 4) return;
+        if (!("true".equals(parts[0]) || "false".equals(parts[0]))) return;
+        if (!("true".equals(parts[1]) || "false".equals(parts[1]))) return;
+        if (!("true".equals(parts[2]) || "false".equals(parts[2]))) return;
+        if (!("always".equals(parts[3]) || "ifContentScrolls".equals(parts[3]) || "never".equals(parts[3]))) return;
+
+        bean.inject = setInjectedAttr(bean, "android:fillViewport", parts[0]);
+        bean.inject = setInjectedAttr(bean, "android:nestedScrollingEnabled", parts[1]);
+        bean.inject = setInjectedAttr(bean, "android:clipToPadding", parts[2]);
+        // Leave the framework default unforced, but preserve the selectable default in the dialog.
+        bean.inject = setInjectedAttr(bean, "android:overScrollMode", "ifContentScrolls".equals(parts[3]) ? "" : parts[3]);
+    }
+
+    private void applyMaterialProgressStyle(ViewBean bean, String selected) {
+        if (bean == null || selected == null) return;
+        String[] parts = selected.split("\\|", -1);
+        String style = parts.length > 1 ? parts[0] : selected.split(" · ", 2)[0];
+        boolean wavy = parts.length > 1
+                ? Boolean.parseBoolean(parts[1])
+                : selected.toLowerCase(java.util.Locale.ROOT).contains("wavy");
+        if (!"Linear".equals(style) && !"Circular".equals(style)) return;
+
+        boolean wasWavy = isMaterialProgressWavy(bean);
+        bean.progressStyle = style;
+        bean.convert = "com.google.android.material.progressindicator."
+                + ("Linear".equals(style) ? "LinearProgressIndicator" : "CircularProgressIndicator");
+        if (wavy) {
+            bean.inject = setInjectedAttr(bean, "style", getWavyMaterialProgressStyle(bean));
+        } else if (wasWavy) {
+            bean.inject = setInjectedAttr(bean, "style", "");
+        }
+    }
+
+    private boolean isMaterialProgressWavy(ViewBean bean) {
+        String style = getInjectedAttr(bean, "style");
+        return style.endsWith("CircularProgressIndicator.Wavy")
+                || style.endsWith("LinearProgressIndicator.Wavy");
+    }
+
+    private String getWavyMaterialProgressStyle(ViewBean bean) {
+        return "@style/Widget.Material3Expressive."
+                + (bean != null && bean.convert != null && bean.convert.endsWith("LinearProgressIndicator")
+                ? "LinearProgressIndicator.Wavy" : "CircularProgressIndicator.Wavy");
+    }
+
+    private String getMaterialButtonStyle(ViewBean bean) {
+        String style = getInjectedAttr(bean, "style");
+        if (style.isEmpty()) return "default";
+        return switch (style) {
+            case "?attr/materialButtonStyle", "?attr/materialButtonOutlinedStyle", "?attr/materialButtonTextButtonStyle",
+                 "@style/Widget.Material3Expressive.Button",
+                 "@style/Widget.Material3Expressive.Button.OutlinedButton",
+                 "@style/Widget.Material3Expressive.Button.TonalButton",
+                 "@style/Widget.Material3Expressive.Button.IconButton.Filled",
+                 "@style/Widget.Material3Expressive.Button.IconButton.Tonal",
+                 "@style/Widget.Material3Expressive.Button.IconButton.Outlined" -> style;
+            default -> "default";
+        };
+    }
+
+    private String getMaterialIconGravity(ViewBean bean) {
+        String gravity = getInjectedAttr(bean, "app:iconGravity");
+        if (gravity.isEmpty()) return bean.convert != null && bean.convert.contains("MaterialIconButton") ? "top" : "textStart";
+        return gravity;
+    }
+
+    private boolean isMaterialButton(ViewBean bean) {
+        if (bean == null || bean.convert == null) return false;
+        String name = bean.convert.substring(bean.convert.lastIndexOf('.') + 1);
+        return name.equals("MaterialButton") || name.equals("MaterialIconButton")
+                || name.equals("ExtendedFloatingActionButton");
+    }
+
+    private boolean isMaterialProgressIndicator(ViewBean bean) {
+        if (bean == null || bean.convert == null) return false;
+        String name = bean.convert.substring(bean.convert.lastIndexOf('.') + 1);
+        return name.equals("MaterialProgressIndicator") || name.equals("CircularProgressIndicator")
+                || name.equals("LinearProgressIndicator") || name.equals("LoadingIndicator");
+    }
+
+    private boolean isMaterialSlider(ViewBean bean) {
+        if (bean == null || bean.convert == null) return false;
+        String name = bean.convert.substring(bean.convert.lastIndexOf('.') + 1);
+        return name.equals("Slider") || name.equals("MaterialSlider");
+    }
+
+    private boolean isNestedScrollView(ViewBean bean) {
+        if (bean == null || bean.convert == null) return false;
+        return bean.convert.endsWith("NestedScrollView");
+    }
+
+    private boolean isCollapsingToolbarLayout(ViewBean bean) {
+        return bean != null && bean.convert != null && bean.convert.endsWith("CollapsingToolbarLayout");
+    }
+
+    private boolean isParentCoordinatorLayout(ViewBean bean) {
+        if (bean == null || bean.parent == null || bean.parent.isEmpty() || e == null || sc_id == null) return false;
+        try {
+            for (ViewBean parent : jC.a(sc_id).d(e.getXmlName())) {
+                if (bean.parent.equals(parent.id)) {
+                    return parent.convert != null && parent.convert.endsWith("CoordinatorLayout");
+                }
+            }
+        } catch (RuntimeException ignored) { }
+        return false;
+    }
+
+    private boolean isParentCollapsingToolbarLayout(ViewBean bean) {
+        if (bean == null || bean.parent == null || bean.parent.isEmpty() || e == null || sc_id == null) return false;
+        try {
+            for (ViewBean parent : jC.a(sc_id).d(e.getXmlName())) {
+                if (bean.parent.equals(parent.id)) {
+                    return parent.convert != null && parent.convert.endsWith("CollapsingToolbarLayout");
+                }
+            }
+        } catch (RuntimeException ignored) { }
+        return false;
+    }
+
+    private String getInjectedAttrOrDefault(ViewBean bean, String attrName, String fallback) {
+        String value = getInjectedAttr(bean, attrName);
+        return value == null || value.isEmpty() ? fallback : value;
+    }
+
     private String setInjectedAttr(ViewBean bean, String attrName, String newValue) {
         LinkedHashMap<String, String> attributes = parseInjectString(bean.inject);
         if (newValue == null || newValue.isEmpty()) {
@@ -424,7 +655,15 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 if (eventType == XmlPullParser.START_TAG) {
                     for (int i = 0; i < parser.getAttributeCount(); i++) {
-                        attributes.put(parser.getAttributeName(i), parser.getAttributeValue(i));
+                        String localName = parser.getAttributeName(i);
+                        String prefix = parser.getAttributePrefix(i);
+                        String qualifiedName = prefix == null || prefix.isEmpty()
+                                ? localName : prefix + ":" + localName;
+                        // Preserve the namespace prefix. Property-backed attributes are stored
+                        // as app:icon, android:value, etc.; dropping the prefix creates duplicate
+                        // unqualified XML attributes and prevents property/custom precedence from
+                        // being deterministic.
+                        attributes.put(qualifiedName, parser.getAttributeValue(i));
                     }
                 }
                 eventType = parser.next();
@@ -479,7 +718,10 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         a(bean, "property_layout_width");
         a(bean, "property_layout_height");
         
-        if (bean.parentType == ViewBean.VIEW_TYPE_LAYOUT_RELATIVE || bean.parentType == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT) {
+        if (bean.parentType == ViewBean.VIEW_TYPE_LAYOUT_RELATIVE
+                || bean.parentType == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT
+                || isParentCoordinatorLayout(bean)
+                || isParentCollapsingToolbarLayout(bean)) {
             a(bean, "property_parent_attr");
         }
         
@@ -617,6 +859,55 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
             Gx classInfo = bean.getClassInfo();
             a(bean, "property_inject");
             a(bean, "property_convert");
+            if ("include".equals(bean.convert)) {
+                a(bean, "property_include_layout");
+            }
+            if (isMaterialButton(bean)) {
+                // The extended FAB has its own shape/style; expose icon-related properties
+                // without letting a generic button-style choice flatten it into a button.
+                if (bean.convert == null || !bean.convert.endsWith("ExtendedFloatingActionButton")) {
+                    a(bean, "property_material_button_style");
+                }
+                a(bean, "property_material_icon");
+                a(bean, "property_material_icon_gravity");
+                a(bean, "property_material_icon_size");
+                a(bean, "property_material_corner_radius");
+            }
+            if (isMaterialProgressIndicator(bean)) {
+                a(bean, "property_material_progress_style");
+            }
+            if (isMaterialSlider(bean)) {
+                a(bean, "property_material_slider_style");
+                a(bean, "property_material_slider_value_from");
+                a(bean, "property_material_slider_value_to");
+                a(bean, "property_material_slider_step_size");
+                a(bean, "property_material_slider_value");
+                a(bean, "property_material_slider_thumb_radius");
+                a(bean, "property_material_slider_track_height");
+                a(bean, "property_material_slider_halo_radius");
+                a(bean, "property_material_slider_label_behavior");
+            }
+            if (isNestedScrollView(bean)) {
+                a(bean, "property_nested_scroll_behavior");
+            }
+            if (isCollapsingToolbarLayout(bean)) {
+                a(bean, "property_collapsing_title");
+                a(bean, "property_collapsing_title_enabled");
+                a(bean, "property_collapsing_title_collapse_mode");
+                a(bean, "property_collapsing_scrim_animation_duration");
+                a(bean, "property_collapsing_scrim_visible_height_trigger");
+                a(bean, "property_collapsing_expanded_title_margin_start");
+                a(bean, "property_collapsing_expanded_title_margin_end");
+                a(bean, "property_collapsing_expanded_title_margin_top");
+                a(bean, "property_collapsing_expanded_title_margin_bottom");
+                a(bean, "property_collapsing_toolbar_id");
+                a(bean, "property_collapsing_content_scrim");
+                a(bean, "property_collapsing_status_bar_scrim");
+            }
+            if (isParentCollapsingToolbarLayout(bean)) {
+                // These are layout params supplied by the CollapsingToolbarLayout parent.
+                a(bean, "property_collapsing_parallax_multiplier");
+            }
             if (classInfo.b("Spinner")) {
                 a(bean, "property_spinner_mode");
             }
@@ -661,7 +952,7 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                 a(bean, "property_checked");
             }
 
-            if (classInfo.b("SeekBar")) {
+            if (classInfo.b("SeekBar") && !isMaterialSlider(bean)) {
                 a(bean, "property_max");
                 a(bean, "property_progress");
             }
@@ -677,7 +968,10 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
             if (classInfo.b("ProgressBar")) {
                 a(bean, "property_max");
                 a(bean, "property_progress");
-                a(bean, "property_progressbar_style");
+                // Material indicators use their own three-value selector, not platform ProgressBar styles.
+                if (!isMaterialProgressIndicator(bean)) {
+                    a(bean, "property_progressbar_style");
+                }
                 a(bean, "property_indeterminate");
             }
         }
@@ -772,6 +1066,33 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                     }
                     case "property_convert" -> bean.convert = inputItem.getValue();
                     case "property_inject" -> bean.inject = inputItem.getValue();
+                    case "property_material_icon" -> bean.inject = setInjectedAttr(bean, "app:icon", inputItem.getValue().trim());
+                    case "property_material_icon_size" -> bean.inject = setInjectedAttr(bean, "app:iconSize", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_material_corner_radius" -> bean.inject = setInjectedAttr(bean, "app:cornerRadius", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_nested_scroll_behavior" -> applyNestedScrollBehavior(bean, inputItem.getValue());
+                    case "property_material_slider_value_from" -> bean.inject = setInjectedAttr(bean, "android:valueFrom", normalizeNumericValue(inputItem.getValue()));
+                    case "property_material_slider_value_to" -> bean.inject = setInjectedAttr(bean, "android:valueTo", normalizeNumericValue(inputItem.getValue()));
+                    case "property_material_slider_step_size" -> bean.inject = setInjectedAttr(bean, "android:stepSize", normalizeNumericValue(inputItem.getValue()));
+                    case "property_material_slider_value" -> bean.inject = setInjectedAttr(bean, "android:value", normalizeNumericValue(inputItem.getValue()));
+                    case "property_material_slider_thumb_radius" -> bean.inject = setInjectedAttr(bean, "app:thumbRadius", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_material_slider_track_height" -> bean.inject = setInjectedAttr(bean, "app:trackHeight", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_material_slider_halo_radius" -> bean.inject = setInjectedAttr(bean, "app:haloRadius", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_collapsing_title" -> bean.inject = setInjectedAttr(bean, "app:title", inputItem.getValue().trim());
+                    case "property_collapsing_scrim_animation_duration" -> bean.inject = setInjectedAttr(bean, "app:scrimAnimationDuration", normalizeIntegerValue(inputItem.getValue()));
+                    case "property_collapsing_scrim_visible_height_trigger" -> bean.inject = setInjectedAttr(bean, "app:scrimVisibleHeightTrigger", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_collapsing_expanded_title_margin_start" -> bean.inject = setInjectedAttr(bean, "app:expandedTitleMarginStart", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_collapsing_expanded_title_margin_end" -> bean.inject = setInjectedAttr(bean, "app:expandedTitleMarginEnd", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_collapsing_expanded_title_margin_top" -> bean.inject = setInjectedAttr(bean, "app:expandedTitleMarginTop", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_collapsing_expanded_title_margin_bottom" -> bean.inject = setInjectedAttr(bean, "app:expandedTitleMarginBottom", normalizeMaterialDimension(inputItem.getValue()));
+                    case "property_collapsing_toolbar_id" -> bean.inject = setInjectedAttr(bean, "app:toolbarId", normalizeIdReference(inputItem.getValue()));
+                    case "property_collapsing_content_scrim" -> bean.inject = setInjectedAttr(bean, "app:contentScrim", inputItem.getValue().trim());
+                    case "property_collapsing_status_bar_scrim" -> bean.inject = setInjectedAttr(bean, "app:statusBarScrim", inputItem.getValue().trim());
+                    case "property_collapsing_parallax_multiplier" -> {
+                        if (bean.parentAttributes == null) bean.parentAttributes = new LinkedHashMap<>();
+                        String normalized = normalizeNumericValue(inputItem.getValue());
+                        if (normalized.isEmpty()) bean.parentAttributes.remove("app:layout_collapseParallaxMultiplier");
+                        else bean.parentAttributes.put("app:layout_collapseParallaxMultiplier", normalized);
+                    }
                     case "property_text" -> bean.text.text = inputItem.getValue();
                     case "property_hint" -> bean.text.hint = inputItem.getValue();
                     case "property_text_size" -> bean.text.textSize = Integer.parseInt(inputItem.getValue());
@@ -829,12 +1150,30 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                             bean.indeterminate = stringSelectorItem.getValue();
                 }
             } else if (view instanceof PropertyStringPairSelectorItem stringPairSelectorItem) {
-                if (stringPairSelectorItem.getKey().equals("property_progressbar_style")) {
-                    bean.progressStyle = stringPairSelectorItem.getValue();
+                String key = stringPairSelectorItem.getKey();
+                String selected = stringPairSelectorItem.getValue();
+                if (key.equals("property_progressbar_style")) {
+                    bean.progressStyle = selected;
+                } else if (key.equals("property_material_button_style")) {
+                    bean.inject = setInjectedAttr(bean, "style", "default".equals(selected) ? "" : selected);
+                } else if (key.equals("property_material_icon_gravity")) {
+                    bean.inject = setInjectedAttr(bean, "app:iconGravity", selected);
+                } else if (key.equals("property_material_progress_style")) {
+                    applyMaterialProgressStyle(bean, selected);
+                } else if (key.equals("property_material_slider_style")) {
+                    bean.inject = setInjectedAttr(bean, "style", "default".equals(selected) ? "" : selected);
+                } else if (key.equals("property_material_slider_label_behavior")) {
+                    bean.inject = setInjectedAttr(bean, "app:labelBehavior", selected);
+                } else if (key.equals("property_collapsing_title_collapse_mode")) {
+                    bean.inject = setInjectedAttr(bean, "app:titleCollapseMode", "scale".equals(selected) ? "" : selected);
                 }
             } else if (view instanceof PropertyCustomViewItem listview_item) {
                 if (listview_item.getKey().equals("property_custom_view_listview")) {
                     bean.customView = listview_item.getValue();
+                } else if (listview_item.getKey().equals("property_include_layout")) {
+                    String selectedLayout = listview_item.getValue();
+                    bean.customView = selectedLayout == null || selectedLayout.isEmpty() || "none".equals(selectedLayout)
+                            ? "" : selectedLayout.replaceFirst("\\.xml$", "");
                 }
             } else if (view instanceof PropertySwitchSingleLineItem switchSingleLineItem) {
                 switch (switchSingleLineItem.getKey()) {
@@ -846,6 +1185,20 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                             bean.clickable = switchSingleLineItem.getValue() ? 1 : 0;
                     case "property_checked" ->
                             bean.checked = switchSingleLineItem.getValue() ? 1 : 0;
+                    case "property_material_progress_wavy" -> {
+                        String currentStyle = getInjectedAttr(bean, "style");
+                        boolean currentlyWavy = currentStyle.endsWith("CircularProgressIndicator.Wavy")
+                                || currentStyle.endsWith("LinearProgressIndicator.Wavy");
+                        if (switchSingleLineItem.getValue()) {
+                            bean.inject = setInjectedAttr(bean, "style", getWavyMaterialProgressStyle(bean));
+                        } else if (currentlyWavy) {
+                            bean.inject = setInjectedAttr(bean, "style", "");
+                        }
+                    }
+                    case "property_nested_scroll_fill_viewport" -> bean.inject = setInjectedAttr(bean, "android:fillViewport", String.valueOf(switchSingleLineItem.getValue()));
+                    case "property_nested_scroll_nested_enabled" -> bean.inject = setInjectedAttr(bean, "android:nestedScrollingEnabled", String.valueOf(switchSingleLineItem.getValue()));
+                    case "property_nested_scroll_clip_to_padding" -> bean.inject = setInjectedAttr(bean, "android:clipToPadding", String.valueOf(switchSingleLineItem.getValue()));
+                    case "property_collapsing_title_enabled" -> bean.inject = setInjectedAttr(bean, "app:titleEnabled", String.valueOf(switchSingleLineItem.getValue()));
                 }
             } else if (view instanceof PropertyColorItem colorItem) {
                 switch (colorItem.getKey()) {

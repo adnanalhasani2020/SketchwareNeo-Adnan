@@ -1,6 +1,7 @@
 package com.besome.sketch.editor.view;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -8,12 +9,14 @@ import android.graphics.NinePatch;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.NinePatchDrawable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -34,6 +37,7 @@ import androidx.constraintlayout.widget.ConstraintLayout;
 
 import com.besome.sketch.beans.ImageBean;
 import com.besome.sketch.beans.LayoutBean;
+import com.besome.sketch.beans.ProjectFileBean;
 import com.besome.sketch.beans.ProjectResourceBean;
 import com.besome.sketch.beans.ViewBean;
 import com.besome.sketch.design.DesignActivity;
@@ -57,6 +61,8 @@ import com.besome.sketch.editor.view.item.ItemRecyclerView;
 import com.besome.sketch.editor.view.item.ItemRelativeLayout;
 import com.besome.sketch.editor.view.item.ItemSearchView;
 import com.besome.sketch.editor.view.item.ItemSeekBar;
+import com.besome.sketch.editor.view.item.ItemMaterialSlider;
+import com.google.android.material.slider.Slider;
 import com.besome.sketch.editor.view.item.ItemSignInButton;
 import com.besome.sketch.editor.view.item.ItemSpinner;
 import com.besome.sketch.editor.view.item.ItemSwitch;
@@ -64,6 +70,7 @@ import com.besome.sketch.editor.view.item.ItemTabLayout;
 import com.besome.sketch.editor.view.item.ItemTextView;
 import com.besome.sketch.editor.view.item.ItemVerticalScrollView;
 import com.besome.sketch.editor.view.item.ItemWebView;
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.tabs.TabLayout;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
@@ -76,6 +83,7 @@ import java.util.regex.Pattern;
 
 import a.a.a.Gx;
 import a.a.a.kC;
+import a.a.a.jC;
 import a.a.a.lC;
 import a.a.a.wB;
 import a.a.a.wq;
@@ -86,6 +94,7 @@ import dev.aldi.sayuti.editor.view.item.ItemCircleImageView;
 import dev.aldi.sayuti.editor.view.item.ItemCodeView;
 import dev.aldi.sayuti.editor.view.item.ItemLottieAnimation;
 import dev.aldi.sayuti.editor.view.item.ItemMaterialButton;
+import dev.aldi.sayuti.editor.view.item.ItemExtendedFloatingActionButton;
 import dev.aldi.sayuti.editor.view.item.ItemOTPView;
 import dev.aldi.sayuti.editor.view.item.ItemPatternLockView;
 import dev.aldi.sayuti.editor.view.item.ItemViewPager;
@@ -316,7 +325,14 @@ public class ViewPane extends RelativeLayout {
             case ViewBean.VIEW_TYPE_WIDGET_CHECKBOX -> new ItemCheckBox(context);
             case ViewBean.VIEW_TYPE_LAYOUT_VSCROLLVIEW -> new ItemVerticalScrollView(context);
             case ViewBean.VIEW_TYPE_WIDGET_SWITCH -> new ItemSwitch(context);
-            case ViewBean.VIEW_TYPE_WIDGET_SEEKBAR -> new ItemSeekBar(context);
+            case ViewBean.VIEW_TYPE_WIDGET_SEEKBAR -> {
+                String className = viewBean.convert == null ? "" : viewBean.convert;
+                if (className.endsWith(".Slider") || className.endsWith(".MaterialSlider")
+                        || className.equals("Slider") || className.equals("MaterialSlider")) {
+                    yield new ItemMaterialSlider(context);
+                }
+                yield new ItemSeekBar(context);
+            }
             case ViewBean.VIEW_TYPE_WIDGET_CALENDARVIEW -> new ItemCalendarView(context);
             case ViewBean.VIEW_TYPE_WIDGET_ADVIEW -> new ItemAdView(context);
             case ViewBean.VIEW_TYPE_WIDGET_MAPVIEW -> new ItemMapView(context);
@@ -340,7 +356,12 @@ public class ViewPane extends RelativeLayout {
             case ViewBeans.VIEW_TYPE_WIDGET_BADGEVIEW -> new ItemBadgeView(context);
             case ViewBeans.VIEW_TYPE_WIDGET_PATTERNLOCKVIEW -> new ItemPatternLockView(context);
             case ViewBeans.VIEW_TYPE_WIDGET_WAVESIDEBAR -> new ItemWaveSideBar(context);
-            case ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON -> new ItemMaterialButton(context);
+            case ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON -> {
+                if (viewBean.convert != null && viewBean.convert.endsWith("ExtendedFloatingActionButton")) {
+                    yield new ItemExtendedFloatingActionButton(context);
+                }
+                yield new ItemMaterialButton(context);
+            }
             case ViewBeans.VIEW_TYPE_WIDGET_SIGNINBUTTON -> new ItemSignInButton(context);
             case ViewBeans.VIEW_TYPE_WIDGET_CIRCLEIMAGEVIEW -> new ItemCircleImageView(context);
             case ViewBeans.VIEW_TYPE_WIDGET_LOTTIEANIMATIONVIEW -> new ItemLottieAnimation(context);
@@ -537,6 +558,7 @@ public class ViewPane extends RelativeLayout {
         if (classInfo.a("TextView")) {
             TextView textView = (TextView) view;
             updateTextView(textView, viewBean);
+            updateCompoundDrawables(textView, injectHandler);
             if (!classInfo.b("Button") && !classInfo.b("Switch")) {
                 textView.setGravity(viewBean.layout.gravity);
             } else {
@@ -585,17 +607,24 @@ public class ViewPane extends RelativeLayout {
             } else {
                 ((ImageView) view).setScaleType(ImageView.ScaleType.valueOf(viewBean.image.scaleType));
             }
+            String injectedSource = injectHandler.getAttributeValueOf("src");
+            if (!TextUtils.isEmpty(injectedSource)) {
+                Drawable sourceDrawable = resolveMaterialButtonIcon(injectedSource);
+                if (sourceDrawable != null) ((ImageView) view).setImageDrawable(sourceDrawable);
+            }
         }
         if (classInfo.a("CompoundButton")) {
             ((CompoundButton) view).setChecked(viewBean.checked != 0);
         }
-        if (classInfo.b("SeekBar")) {
+        if (view instanceof ItemMaterialSlider materialSlider) {
+            updateMaterialSlider(materialSlider, injectHandler);
+        } else if (classInfo.b("SeekBar")) {
             SeekBar seekBar = (SeekBar) view;
             seekBar.setProgress(viewBean.progress);
             seekBar.setMax(viewBean.max);
         }
-        if (classInfo.b("ProgressBar")) {
-            ((ItemProgressBar) view).setProgressBarStyle(viewBean.progressStyle);
+        if (classInfo.b("ProgressBar") && view instanceof ItemProgressBar progressView) {
+            progressView.setProgressBarStyle(viewBean);
         }
         if (classInfo.b("CalendarView")) {
             ((CalendarView) view).setFirstDayOfWeek(viewBean.firstDayOfWeek);
@@ -615,8 +644,11 @@ public class ViewPane extends RelativeLayout {
         if (classInfo.b("TabLayout")) {
             updateTabLayout((ItemTabLayout) view, injectHandler);
         }
-        if (classInfo.b("MaterialButton")) {
-            updateMaterialButton((ItemMaterialButton) view, injectHandler);
+        if (view instanceof MaterialButton materialButton) {
+            updateMaterialButton(materialButton, injectHandler, viewBean);
+        }
+        if ("include".equals(viewBean.convert)) {
+            updateIncludePreview(view, viewBean);
         }
         if (classInfo.b("SignInButton")) {
             ItemSignInButton button = (ItemSignInButton) view;
@@ -869,6 +901,10 @@ public class ViewPane extends RelativeLayout {
     }
 
     private void a(ViewBean view, ItemLinearLayout linearLayout) {
+        // An <include> is a reference to another layout, not an editable container.
+        // Its preview children must never become drop targets or serialized view children.
+        ViewBean containerBean = linearLayout.getBean();
+        if (containerBean != null && "include".equals(containerBean.convert)) return;
         float scaleX = getScaleX();
         float scaleY = getScaleY();
         int[] locationOnScreen = new int[2];
@@ -1638,11 +1674,294 @@ public class ViewPane extends RelativeLayout {
         tabLayout.setTabTextColors(tabTextColor, tabSelectedTextColor);
     }
 
-    private void updateMaterialButton(ItemMaterialButton materialButton, InjectAttributeHandler handler) {
+    private void updateIncludePreview(View view, ViewBean viewBean) {
+        if (!(view instanceof ItemLinearLayout container)) return;
+        View preview = container.findViewById(R.id.include_preview_root);
+        if (preview == null) {
+            preview = LayoutInflater.from(getContext()).inflate(R.layout.item_include_preview, container, false);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            container.addView(preview, params);
+        }
+
+        TextView title = preview.findViewById(R.id.include_preview_title);
+        TextView[] items = new TextView[]{
+                preview.findViewById(R.id.include_preview_item_1),
+                preview.findViewById(R.id.include_preview_item_2),
+                preview.findViewById(R.id.include_preview_item_3)
+        };
+        TextView more = preview.findViewById(R.id.include_preview_more);
+        String customView = viewBean.customView == null ? "" : viewBean.customView.trim();
+        if (customView.isEmpty() || "none".equalsIgnoreCase(customView)) {
+            title.setText("Included layout · not selected");
+            items[0].setText("Choose a layout in Properties");
+            items[0].setVisibility(VISIBLE);
+            items[1].setVisibility(GONE);
+            items[2].setVisibility(GONE);
+            more.setVisibility(GONE);
+            return;
+        }
+
+        title.setText("Included layout · " + customView + ".xml");
+        ArrayList<ViewBean> children = new ArrayList<>();
+        try {
+            ArrayList<ViewBean> source = jC.a(sc_id).d(ProjectFileBean.getXmlName(customView));
+            if (source != null) {
+                for (ViewBean child : source) {
+                    if (child == null || "root".equals(child.id) || "_root".equals(child.id)) continue;
+                    children.add(child);
+                }
+            }
+        } catch (Exception exception) {
+            Log.e("ViewPane", "Unable to read include preview for layout " + customView, exception);
+        }
+
+        for (int index = 0; index < items.length; index++) {
+            if (index >= children.size()) {
+                items[index].setVisibility(GONE);
+                continue;
+            }
+            ViewBean child = children.get(index);
+            String label = child.text == null ? "" : child.text.text;
+            if (TextUtils.isEmpty(label)) {
+                String className = child.convert == null ? "" : child.convert;
+                int split = className.lastIndexOf('.');
+                label = split >= 0 ? className.substring(split + 1) : className;
+                if (TextUtils.isEmpty(label)) label = "View";
+            }
+            label = label.replaceAll("(?<=[a-z])(?=[A-Z])", " ").trim();
+            if (label.length() > 20) label = label.substring(0, 18) + "…";
+            items[index].setText(label);
+            items[index].setVisibility(VISIBLE);
+            items[index].setBackgroundResource(child.convert != null && child.convert.endsWith("MaterialButton")
+                    ? R.drawable.bg_include_preview_button
+                    : child.convert != null && (child.convert.endsWith("EditText") || child.convert.endsWith("TextInputLayout"))
+                    ? R.drawable.bg_include_preview_field : R.drawable.bg_include_preview_item);
+        }
+        if (children.isEmpty()) {
+            items[0].setText("Layout is empty or unavailable");
+            items[0].setBackgroundResource(R.drawable.bg_include_preview_item);
+            items[0].setVisibility(VISIBLE);
+            items[1].setVisibility(GONE);
+            items[2].setVisibility(GONE);
+            more.setVisibility(GONE);
+        } else if (children.size() > items.length) {
+            more.setText("+" + (children.size() - items.length) + " more views");
+            more.setVisibility(VISIBLE);
+        } else {
+            more.setVisibility(GONE);
+        }
+    }
+
+    private void updateMaterialSlider(ItemMaterialSlider slider, InjectAttributeHandler handler) {
+        float from = parseFiniteFloat(handler.getAttributeValueOf("valueFrom"), 0f);
+        float to = parseFiniteFloat(handler.getAttributeValueOf("valueTo"), 100f);
+        if (to <= from) { from = 0f; to = 100f; }
+        float step = Math.max(0f, parseFiniteFloat(handler.getAttributeValueOf("stepSize"), 0f));
+        try {
+            // Clear step constraints before changing the range so editing values in any order is safe.
+            slider.setStepSize(0f);
+            slider.setValueFrom(from);
+            slider.setValueTo(to);
+            if (step > 0f && Math.abs(((to - from) / step) - Math.round((to - from) / step)) < 0.001f) {
+                slider.setStepSize(step);
+            }
+            float requestedValue = parseFiniteFloat(handler.getAttributeValueOf("value"), from);
+            requestedValue = Math.max(from, Math.min(to, requestedValue));
+            if (step > 0f && slider.getStepSize() > 0f) {
+                requestedValue = from + Math.round((requestedValue - from) / step) * step;
+                requestedValue = Math.max(from, Math.min(to, requestedValue));
+            }
+            slider.setValue(requestedValue);
+        } catch (IllegalArgumentException | IllegalStateException invalidRange) {
+            Log.w("ViewPane", "Invalid Material Slider range; using a safe 0..100 range", invalidRange);
+            try {
+                slider.setStepSize(0f);
+                slider.setValueFrom(0f);
+                slider.setValueTo(100f);
+                slider.setValue(0f);
+            } catch (RuntimeException ignored) { }
+        }
+        String thumbRadius = handler.getAttributeValueOf("thumbRadius");
+        String trackHeight = handler.getAttributeValueOf("trackHeight");
+        String haloRadius = handler.getAttributeValueOf("haloRadius");
+        if (!TextUtils.isEmpty(thumbRadius)) slider.setThumbRadius(Math.max(0, PropertiesUtil.resolveSize(thumbRadius, 10)));
+        if (!TextUtils.isEmpty(trackHeight)) slider.setTrackHeight(Math.max(1, PropertiesUtil.resolveSize(trackHeight, 4)));
+        if (!TextUtils.isEmpty(haloRadius)) slider.setHaloRadius(Math.max(0, PropertiesUtil.resolveSize(haloRadius, 24)));
+        String labelBehavior = handler.getAttributeValueOf("labelBehavior");
+        if (!TextUtils.isEmpty(labelBehavior)) {
+            slider.setLabelBehavior(switch (labelBehavior) {
+                case "withinBounds" -> 1;
+                case "gone" -> 2;
+                default -> 0;
+            });
+        }
+    }
+
+    private float parseFiniteFloat(String value, float fallback) {
+        if (TextUtils.isEmpty(value)) return fallback;
+        try {
+            float parsed = Float.parseFloat(value.trim());
+            return Float.isNaN(parsed) || Float.isInfinite(parsed) ? fallback : parsed;
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private void updateMaterialButton(MaterialButton materialButton, InjectAttributeHandler handler, ViewBean viewBean) {
         String radius = handler.getAttributeValueOf("cornerRadius");
         String stroke = handler.getAttributeValueOf("strokeWidth");
+        String iconSize = handler.getAttributeValueOf("iconSize");
+        String iconPadding = handler.getAttributeValueOf("iconPadding");
+        String iconGravity = handler.getAttributeValueOf("iconGravity");
+        String iconTint = handler.getAttributeValueOf("iconTint");
+        String strokeColor = handler.getAttributeValueOf("strokeColor");
+        String backgroundTint = handler.getAttributeValueOf("backgroundTint");
+        String style = handler.getAttributeValueOf("style");
+
+        boolean extendedFab = viewBean != null && viewBean.convert != null
+                && viewBean.convert.endsWith("ExtendedFloatingActionButton");
         materialButton.setStrokeWidth(PropertiesUtil.resolveSize(stroke, 0));
-        materialButton.setCornerRadius(PropertiesUtil.resolveSize(radius, 8));
+        materialButton.setCornerRadius(PropertiesUtil.resolveSize(radius, extendedFab ? 24 : 8));
+        // Do not force a 0px icon size when the user has not supplied app:iconSize.
+        if (!TextUtils.isEmpty(iconSize)) {
+            materialButton.setIconSize(Math.max(1, PropertiesUtil.resolveSize(iconSize, 24)));
+        } else if (extendedFab) {
+            materialButton.setIconSize(Math.max(1, (int) wB.a(getContext(), 24f)));
+        }
+        if (!TextUtils.isEmpty(iconPadding)) {
+            materialButton.setIconPadding(Math.max(0, PropertiesUtil.resolveSize(iconPadding, 0)));
+        } else if (extendedFab) {
+            materialButton.setIconPadding((int) wB.a(getContext(), 8f));
+        }
+        materialButton.setIconGravity(switch (iconGravity) {
+            case "start" -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_START;
+            case "textStart" -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START;
+            case "end" -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_END;
+            case "textEnd" -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_END;
+            case "top" -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_TOP;
+            case "textTop" -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_TOP;
+            default -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START;
+        });
+        if (extendedFab) {
+            // ItemExtendedFloatingActionButton scales these values as dp, like other editor items.
+            materialButton.setPadding(16, 10, 20, 10);
+            materialButton.setElevation(wB.a(getContext(), 4f));
+            materialButton.setMinimumHeight((int) wB.a(getContext(), 48f));
+        }
+
+        if (PropertiesUtil.isHexColor(iconTint)) {
+            materialButton.setIconTint(ColorStateList.valueOf(PropertiesUtil.parseColor(iconTint)));
+        }
+        if (PropertiesUtil.isHexColor(strokeColor)) {
+            materialButton.setStrokeColor(ColorStateList.valueOf(PropertiesUtil.parseColor(strokeColor)));
+        }
+        if (PropertiesUtil.isHexColor(backgroundTint)) {
+            materialButton.setBackgroundTintList(ColorStateList.valueOf(PropertiesUtil.parseColor(backgroundTint)));
+        }
+
+        String iconValue = handler.getAttributeValueOf("icon");
+        if (iconValue == null || iconValue.trim().isEmpty()) {
+            materialButton.setIcon(null);
+        } else {
+            Drawable iconDrawable = resolveMaterialButtonIcon(iconValue);
+            if (iconDrawable != null) materialButton.setIcon(iconDrawable);
+        }
+
+        // Theme styles are serialized for the generated app. Approximate them in the editor preview.
+        if (style.contains("IconButton")) {
+            int iconExtent = PropertiesUtil.resolveSize(iconSize, 24);
+            int buttonExtent = Math.max(iconExtent + (int) wB.a(getContext(), 24f), (int) wB.a(getContext(), 48f));
+            ViewGroup.LayoutParams iconParams = materialButton.getLayoutParams();
+            if (iconParams != null) {
+                if (iconParams.width == ViewGroup.LayoutParams.WRAP_CONTENT || iconParams.width <= 0) iconParams.width = buttonExtent;
+                if (iconParams.height == ViewGroup.LayoutParams.WRAP_CONTENT || iconParams.height <= 0) iconParams.height = buttonExtent;
+                materialButton.setLayoutParams(iconParams);
+            }
+            materialButton.setCornerRadius(buttonExtent / 2);
+            materialButton.setInsetTop(0);
+            materialButton.setInsetBottom(0);
+            materialButton.setPadding(0, 0, 0, 0);
+            if (style.contains("Tonal")) {
+                materialButton.setBackgroundTintList(ColorStateList.valueOf(com.google.android.material.color.MaterialColors.getColor(materialButton, R.attr.colorSecondaryContainer)));
+            }
+        }
+        if (style.contains("Outlined") || style.contains("outlined")) {
+            materialButton.setBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
+            if (materialButton.getStrokeWidth() == 0) {
+                materialButton.setStrokeWidth(Math.max(1, PropertiesUtil.resolveSize("1dp", 1)));
+            }
+            if (!PropertiesUtil.isHexColor(strokeColor)) {
+                materialButton.setStrokeColor(ColorStateList.valueOf(materialButton.getCurrentTextColor()));
+            }
+        } else if (style.contains("TextButton") || style.contains("TextButtonStyle")
+                || style.contains("TextButton".toLowerCase()) || style.contains(".Text")) {
+            materialButton.setBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
+            materialButton.setStrokeWidth(0);
+        } else if (style.contains("Tonal")) {
+            materialButton.setBackgroundTintList(ColorStateList.valueOf(com.google.android.material.color.MaterialColors.getColor(materialButton, R.attr.colorSecondaryContainer)));
+        }
+    }
+
+    private void updateCompoundDrawables(TextView textView, InjectAttributeHandler handler) {
+        String leftValue = handler.getAttributeValueOf("drawableLeft");
+        String startValue = handler.getAttributeValueOf("drawableStart");
+        String rightValue = handler.getAttributeValueOf("drawableRight");
+        String endValue = handler.getAttributeValueOf("drawableEnd");
+        String topValue = handler.getAttributeValueOf("drawableTop");
+        String bottomValue = handler.getAttributeValueOf("drawableBottom");
+        String startOrLeft = !TextUtils.isEmpty(startValue) ? startValue : leftValue;
+        String endOrRight = !TextUtils.isEmpty(endValue) ? endValue : rightValue;
+        Drawable start = resolveMaterialButtonIcon(startOrLeft);
+        Drawable top = resolveMaterialButtonIcon(topValue);
+        Drawable end = resolveMaterialButtonIcon(endOrRight);
+        Drawable bottom = resolveMaterialButtonIcon(bottomValue);
+        if (!TextUtils.isEmpty(startOrLeft) || !TextUtils.isEmpty(topValue)
+                || !TextUtils.isEmpty(endOrRight) || !TextUtils.isEmpty(bottomValue)) {
+            textView.setCompoundDrawablesRelativeWithIntrinsicBounds(start, top, end, bottom);
+        }
+    }
+
+    private Drawable resolveMaterialButtonIcon(String value) {
+        String name = value == null ? "" : value.trim();
+        String resourceType = "drawable";
+        if (name.startsWith("@drawable/")) {
+            name = name.substring("@drawable/".length());
+        } else if (name.startsWith("@mipmap/")) {
+            name = name.substring("@mipmap/".length());
+            resourceType = "mipmap";
+        } else if (name.startsWith("drawable/")) {
+            name = name.substring("drawable/".length());
+        } else if (name.startsWith("mipmap/")) {
+            name = name.substring("mipmap/".length());
+            resourceType = "mipmap";
+        }
+        if (name.isEmpty() || name.startsWith("?") || name.startsWith("@color/")
+                || name.startsWith("@android:")) return null;
+
+        try {
+            int resourceId = getContext().getResources().getIdentifier(name, resourceType, getContext().getPackageName());
+            if (resourceId == 0 && !"drawable".equals(resourceType)) {
+                resourceId = getContext().getResources().getIdentifier(name, "drawable", getContext().getPackageName());
+            }
+            if (resourceId != 0) return AppCompatResources.getDrawable(getContext(), resourceId);
+            if (resourcesManager != null && resourcesManager.h(name) == ProjectResourceBean.PROJECT_RES_TYPE_RESOURCE) {
+                String path = resourcesManager.f(name);
+                if (path != null && new File(path).isFile()) {
+                    if (path.endsWith(".xml")) {
+                        AppCompatImageView temporary = new AppCompatImageView(getContext());
+                        VectorDrawableLoader loader = new VectorDrawableLoader();
+                        loader.setImageVectorFromFile(temporary, loader.getVectorFullPath(sc_id, name));
+                        return temporary.getDrawable();
+                    }
+                    Bitmap bitmap = BitmapFactory.decodeFile(path);
+                    if (bitmap != null) return new BitmapDrawable(getResources(), bitmap);
+                }
+            }
+        } catch (Exception e) {
+            Log.e("ViewPane", "Unable to preview Material button icon: " + value, e);
+        }
+        return null;
     }
 
     private String extractAttrValue(String line, String attribute) {

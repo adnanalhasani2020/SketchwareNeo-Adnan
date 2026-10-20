@@ -40,6 +40,13 @@ public class sq {
     public static String[] k;
     public static String[] l;
     public static Pair<String, String>[] m;
+    public static Pair<String, String>[] materialProgressStyles;
+    public static Pair<String, String>[] materialButtonStyles;
+    public static Pair<String, String>[] materialIconGravities;
+    public static Pair<String, String>[] materialSliderStyles;
+    public static Pair<String, String>[] materialSliderLabelBehaviors;
+    public static Pair<String, String>[] nestedScrollOverScrollModes;
+    public static Pair<String, String>[] collapsingTitleModes;
     public static Pair<Integer, String>[] n;
     public static Pair<Integer, String>[] o;
     public static ColorBean[] p;
@@ -68,6 +75,53 @@ public class sq {
         k = new String[]{"BANNER", "MEDIUM_RECTANGLE", "LARGE_BANNER", "SMART_BANNER"};
         l = new String[]{"true", "false"};
         m = new Pair[]{new Pair<>(ViewBean.PROGRESSBAR_STYLE_CIRCLE, "Circle"), new Pair<>(ViewBean.PROGRESSBAR_STYLE_HORIZONTAL, "Horizontal")};
+        materialProgressStyles = new Pair[]{
+                new Pair<>("Circular", "Circular"),
+                new Pair<>("Linear", "Linear")
+        };
+        materialButtonStyles = new Pair[]{
+                new Pair<>("default", "Default (theme)"),
+                new Pair<>("?attr/materialButtonStyle", "Filled (theme)"),
+                new Pair<>("?attr/materialButtonOutlinedStyle", "Outlined (theme)"),
+                new Pair<>("?attr/materialButtonTextButtonStyle", "Text (theme)"),
+                new Pair<>("@style/Widget.Material3Expressive.Button", "M3 Filled"),
+                new Pair<>("@style/Widget.Material3Expressive.Button.OutlinedButton", "M3 Outlined"),
+                new Pair<>("@style/Widget.Material3Expressive.Button.TonalButton", "M3 Tonal"),
+                new Pair<>("@style/Widget.Material3Expressive.Button.IconButton.Filled", "Icon · Filled"),
+                new Pair<>("@style/Widget.Material3Expressive.Button.IconButton.Tonal", "Icon · Tonal"),
+                new Pair<>("@style/Widget.Material3Expressive.Button.IconButton.Outlined", "Icon · Outlined")
+        };
+        materialIconGravities = new Pair[]{
+                new Pair<>("textStart", "Horizontal (icon before text)"),
+                new Pair<>("top", "Vertical (icon above text)"),
+                new Pair<>("textEnd", "Icon after text"),
+                new Pair<>("textTop", "Icon on top of text"),
+                new Pair<>("start", "Start"),
+                new Pair<>("end", "End")
+        };
+        materialSliderStyles = new Pair[]{
+                new Pair<>("default", "Default (theme)"),
+                new Pair<>("@style/Widget.Material3.Slider", "Material 3 Slider"),
+                new Pair<>("@style/Widget.Material3Expressive.Slider.Xsmall", "M3 Expressive · Xsmall"),
+                new Pair<>("@style/Widget.Material3Expressive.Slider.Small", "M3 Expressive · Small"),
+                new Pair<>("@style/Widget.Material3Expressive.Slider.Medium", "M3 Expressive · Medium"),
+                new Pair<>("@style/Widget.Material3Expressive.Slider.Large", "M3 Expressive · Large"),
+                new Pair<>("@style/Widget.Material3Expressive.Slider.Xlarge", "M3 Expressive · Xlarge")
+        };
+        materialSliderLabelBehaviors = new Pair[]{
+                new Pair<>("floating", "Floating"),
+                new Pair<>("withinBounds", "Within bounds"),
+                new Pair<>("gone", "Hidden")
+        };
+        nestedScrollOverScrollModes = new Pair[]{
+                new Pair<>("always", "Always"),
+                new Pair<>("ifContentScrolls", "If content scrolls (default)"),
+                new Pair<>("never", "Never")
+        };
+        collapsingTitleModes = new Pair[]{
+                new Pair<>("scale", "Scale"),
+                new Pair<>("fade", "Fade")
+        };
         n = new Pair[]{new Pair<>(10, "10sp"), new Pair<>(11, "11sp"), new Pair<>(12, "12sp"), new Pair<>(13, "13sp"), new Pair<>(14, "14sp"), new Pair<>(15, "15sp"), new Pair<>(16, "16sp"), new Pair<>(17, "17sp"), new Pair<>(18, "18sp")};
         o = new Pair[]{new Pair<>(10, "10sp"), new Pair<>(11, "11sp"), new Pair<>(12, "12sp"), new Pair<>(14, "14sp"), new Pair<>(16, "16sp"), new Pair<>(18, "18sp"), new Pair<>(20, "20sp"), new Pair<>(25, "25sp"), new Pair<>(30, "30sp"), new Pair<>(40, "40sp"), new Pair<>(50, "50sp"), new Pair<>(60, "60sp"), new Pair<>(70, "70sp"), new Pair<>(80, "80sp"), new Pair<>(90, "90sp"), new Pair<>(100, "100sp")};
         p = new ColorBean[]{new ColorBean("#F44336", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#FFEBEE", "RED", "#212121", R.drawable.checked_grey_32), new ColorBean("#FFCDD2", "RED", "#212121", R.drawable.checked_grey_32), new ColorBean("#EF9A9A", "RED", "#212121", R.drawable.checked_grey_32), new ColorBean("#E57373", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#EF5350", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#F44336", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#E53935", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#D32F2F", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#C62828", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#B71C1C", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#FF8A80", "RED", "#212121", R.drawable.checked_grey_32), new ColorBean("#FF5252", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#FF1744", "RED", "#ffffff", R.drawable.checked_white_32), new ColorBean("#D50000", "RED", "#ffffff", R.drawable.checked_white_32)};
@@ -167,10 +221,16 @@ public class sq {
     }
 
     public static Pair<String, String>[] b(String property) {
-        if (property.equals("property_progressbar_style")) {
-            return m;
-        } else {
-            return new Pair[0];
-        }
+        return switch (property) {
+            case "property_progressbar_style" -> m;
+            case "property_material_progress_style" -> materialProgressStyles;
+            case "property_material_button_style" -> materialButtonStyles;
+            case "property_material_icon_gravity" -> materialIconGravities;
+            case "property_material_slider_style" -> materialSliderStyles;
+            case "property_material_slider_label_behavior" -> materialSliderLabelBehaviors;
+            case "property_nested_scroll_over_scroll_mode" -> nestedScrollOverScrollModes;
+            case "property_collapsing_title_collapse_mode" -> collapsingTitleModes;
+            default -> new Pair[0];
+        };
     }
 }

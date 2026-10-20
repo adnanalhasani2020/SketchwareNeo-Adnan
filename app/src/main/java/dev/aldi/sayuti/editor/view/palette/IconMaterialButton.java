@@ -14,10 +14,17 @@ import pro.sketchware.R;
 
 public class IconMaterialButton extends IconBase implements AndroidxOrMaterialView {
 
+    private final boolean iconOnly;
+
     public IconMaterialButton(Context context) {
+        this(context, false);
+    }
+
+    public IconMaterialButton(Context context, boolean iconOnly) {
         super(context);
-        setWidgetImage(R.drawable.ic_mtrl_button_click);
-        setWidgetName("MaterialButton");
+        this.iconOnly = iconOnly;
+        setWidgetImage(iconOnly ? R.drawable.ic_palette_m3_icon_button : R.drawable.ic_palette_m3_material_button);
+        setWidgetName(iconOnly ? "Material Icon Button" : "MaterialButton");
     }
 
     @Override
@@ -32,9 +39,11 @@ public class IconMaterialButton extends IconBase implements AndroidxOrMaterialVi
         viewBean.layout.paddingRight = 8;
         viewBean.layout.paddingBottom = 8;
         viewBean.text.textColor = Color.WHITE;
-        viewBean.text.text = getName();
+        viewBean.text.text = iconOnly ? "" : "MaterialButton";
         viewBean.convert = "com.google.android.material.button.MaterialButton";
-        viewBean.inject = "app:cornerRadius=\"8dp\"";
+        viewBean.inject = iconOnly
+                ? "style=\"@style/Widget.Material3Expressive.Button.IconButton.Filled\"\napp:iconGravity=\"top\"\napp:iconSize=\"24dp\"\napp:cornerRadius=\"24dp\""
+                : "style=\"@style/Widget.Material3Expressive.Button\"\napp:cornerRadius=\"8dp\"";
         return viewBean;
     }
 }

@@ -2,8 +2,10 @@ package com.besome.sketch.editor.property;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.util.Pair;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
@@ -13,6 +15,7 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.color.MaterialColors;
 
 import a.a.a.Kw;
 import a.a.a.mB;
@@ -49,15 +52,30 @@ public class PropertyStringPairSelectorItem extends RelativeLayout implements Vi
         int identifier = getResources().getIdentifier(key, "string", getContext().getPackageName());
         if (identifier > 0) {
             tvName.setText(Helper.getResString(identifier));
-            if (key.equals("property_progressbar_style")) {
-                icon = R.drawable.ic_mtrl_style;
+            if (key.equals("property_progressbar_style")
+                    || key.equals("property_material_progress_style")
+                    || key.equals("property_material_button_style")
+                    || key.equals("property_material_icon_gravity")
+                    || key.equals("property_material_slider_style")
+                    || key.equals("property_material_slider_label_behavior")
+                    || key.equals("property_nested_scroll_over_scroll_mode")
+                    || key.equals("property_collapsing_title_collapse_mode")) {
+                icon = key.equals("property_material_slider_style") || key.equals("property_material_slider_label_behavior")
+                        ? R.drawable.ic_property_material_slider
+                        : key.equals("property_nested_scroll_over_scroll_mode") ? R.drawable.ic_property_nested_scroll
+                        : key.equals("property_collapsing_title_collapse_mode") ? R.drawable.ic_property_collapsing_toolbar
+                        : key.equals("property_material_progress_style") ? R.drawable.ic_mtrl_progress_bar
+                        : R.drawable.ic_mtrl_style;
             }
             if (propertyMenuItem.getVisibility() == VISIBLE) {
-                ((ImageView) findViewById(R.id.img_icon)).setImageResource(icon);
+                ImageView menuIcon = findViewById(R.id.img_icon);
+                menuIcon.setImageResource(icon);
+                tintIcon(menuIcon);
                 ((TextView) findViewById(R.id.tv_title)).setText(Helper.getResString(identifier));
                 return;
             }
             imgLeftIcon.setImageResource(icon);
+            tintIcon(imgLeftIcon);
         }
     }
 
@@ -68,6 +86,16 @@ public class PropertyStringPairSelectorItem extends RelativeLayout implements Vi
     public void setValue(String value) {
         this.value = value;
         tvValue.setText(value);
+    }
+
+    private void setDisplayValue(String displayValue) {
+        tvValue.setText(displayValue == null ? "" : displayValue);
+    }
+
+    private void tintIcon(ImageView target) {
+        if (target != null && icon != 0) {
+            target.setImageTintList(ColorStateList.valueOf(MaterialColors.getColor(target, R.attr.colorOnSurfaceVariant)));
+        }
     }
 
     @Override
@@ -109,6 +137,10 @@ public class PropertyStringPairSelectorItem extends RelativeLayout implements Vi
     }
 
     private void showDialog() {
+        if ("property_material_progress_style".equals(key)) {
+            showMaterialProgressStyleDialog();
+            return;
+        }
         MaterialAlertDialogBuilder dialog = new MaterialAlertDialogBuilder(getContext());
         dialog.setTitle(Helper.getText(tvName));
         dialog.setIcon(icon);
@@ -152,6 +184,36 @@ public class PropertyStringPairSelectorItem extends RelativeLayout implements Vi
         });
         dialog.setNegativeButton(Helper.getResString(R.string.common_word_cancel), null);
         dialog.show();
+    }
+
+    private void showMaterialProgressStyleDialog() {
+        View view = LayoutInflater.from(getContext()).inflate(R.layout.dialog_material_progress_style, null, false);
+        com.google.android.material.button.MaterialButtonToggleGroup group =
+                view.findViewById(R.id.group_progress_orientation);
+        android.widget.CompoundButton wavySwitch = view.findViewById(R.id.switch_wavy_progress);
+        String saved = value == null ? "Circular" : value;
+        String[] encoded = saved.split("\\|", -1);
+        String style = encoded.length > 1 ? encoded[0] : saved.split(" · ", 2)[0];
+        boolean wavy = encoded.length > 1 ? Boolean.parseBoolean(encoded[1]) : saved.toLowerCase(java.util.Locale.ROOT).contains("wavy");
+        int checkedId = "Linear".equalsIgnoreCase(style) ? R.id.button_progress_linear : R.id.button_progress_circular;
+        group.check(checkedId);
+        wavySwitch.setChecked(wavy);
+
+        new MaterialAlertDialogBuilder(getContext())
+                .setTitle(Helper.getText(tvName))
+                .setIcon(icon)
+                .setView(view)
+                .setNegativeButton(Helper.getResString(R.string.common_word_cancel), null)
+                .setPositiveButton(Helper.getResString(R.string.common_word_save), (dialog, which) -> {
+                    String selectedStyle = group.getCheckedButtonId() == R.id.button_progress_linear ? "Linear" : "Circular";
+                    boolean useWavy = wavySwitch.isChecked();
+                    String config = selectedStyle + "|" + useWavy;
+                    // Store the machine-readable value for serialization, but keep the UI summary human-friendly.
+                    setValue(config);
+                    setDisplayValue(selectedStyle + (useWavy ? " · Wavy" : ""));
+                    if (valueChangeListener != null) valueChangeListener.a(key, config);
+                })
+                .show();
     }
 
     private RadioButton getOption(Pair<String, String> pair) {

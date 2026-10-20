@@ -71,6 +71,7 @@ import mod.agus.jcoderz.beans.ViewBeans;
 import mod.hey.studios.util.ProjectFile;
 import mod.jbk.util.LogUtil;
 import pro.sketchware.R;
+import com.besome.sketch.editor.manage.library.material3.Material3LibraryManager;
 import pro.sketchware.utility.ThemeUtils;
 import pro.sketchware.widgets.IconCustomWidget;
 import pro.sketchware.widgets.WidgetsCreatorManager;
@@ -446,6 +447,16 @@ public class ViewEditor extends RelativeLayout implements View.OnClickListener, 
                     }
                 } else if (currentTouchedView instanceof IconBase icon) {
                     ViewBean bean = icon.getBean();
+                    if (bean == null) {
+                        LogUtil.e("ViewEditor", "Palette icon has no ViewBean; name=" + icon.getName());
+                        bB.b(getContext(), "This palette component is not registered correctly.", bB.TOAST_NORMAL).show();
+                        break lol;
+                    }
+                    if (isMaterial3View(bean) && !isMaterial3EnabledForCurrentProject()) {
+                        LogUtil.e("ViewEditor", "Blocked Material 3 component while Material 3 is disabled: " + icon.getName());
+                        bB.b(getContext(), getString(R.string.design_library_guide_setup_first), bB.TOAST_NORMAL).show();
+                        break lol;
+                    }
                     bean.id = generateWidgetId(bean);
                     viewPane.updateViewBeanProperties(bean, (int) motionEvent.getRawX(), (int) motionEvent.getRawY());
                     jC.a(a).a(b, bean);
@@ -708,9 +719,24 @@ public class ViewEditor extends RelativeLayout implements View.OnClickListener, 
             } else if (currentTouchedView instanceof IconMapView && !draggingListener.isGoogleMapEnabled()) {
                 bB.b(getContext(), getString(R.string.design_library_guide_setup_first), bB.TOAST_NORMAL).show();
                 return;
-            } else if ((currentTouchedView.getClass().getName().contains("AndroidxOrMaterialView") || (currentTouchedView instanceof IconBase && ((IconBase) currentTouchedView).getBean().type == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT)) && !isAppCompatEnabled) {
-                bB.b(getContext(), getString(R.string.design_library_guide_setup_first), bB.TOAST_NORMAL).show();
-                return;
+            } else if (currentTouchedView instanceof IconBase icon) {
+                ViewBean bean = icon.getBean();
+                if (bean == null) {
+                    LogUtil.e("ViewEditor", "Cannot start drag: palette icon has no ViewBean; name=" + icon.getName());
+                    bB.b(getContext(), "This palette component is not registered correctly.", bB.TOAST_NORMAL).show();
+                    return;
+                }
+                if (isMaterial3View(bean) && !isMaterial3EnabledForCurrentProject()) {
+                    LogUtil.e("ViewEditor", "Blocked Material 3 drag while Material 3 is disabled: " + icon.getName());
+                    bB.b(getContext(), getString(R.string.design_library_guide_setup_first), bB.TOAST_NORMAL).show();
+                    return;
+                }
+                if ((currentTouchedView instanceof AndroidxOrMaterialView
+                        || bean.type == ViewBean.VIEW_TYPE_LAYOUT_CONSTRAINT
+                        || requiresAppCompat(bean)) && !isAppCompatEnabled) {
+                    bB.b(getContext(), getString(R.string.design_library_guide_setup_first), bB.TOAST_NORMAL).show();
+                    return;
+                }
             }
         }
         paletteWidget.setScrollEnabled(false);
@@ -984,7 +1010,11 @@ public class ViewEditor extends RelativeLayout implements View.OnClickListener, 
     }
 
     public void extraWidgetLayout(String str, String str2) {
-        View extraWidgetLayout = paletteWidget.extraWidgetLayout(str, str2);
+        extraWidgetLayout(str, str2, "");
+    }
+
+    public void extraWidgetLayout(String str, String str2, String initialCustomView) {
+        View extraWidgetLayout = paletteWidget.extraWidgetLayout(str, str2, initialCustomView);
         extraWidgetLayout.setClickable(true);
         extraWidgetLayout.setOnTouchListener(this);
     }
@@ -999,6 +1029,35 @@ public class ViewEditor extends RelativeLayout implements View.OnClickListener, 
         View extraWidget = paletteWidget.extraWidget(str, str2, str3);
         extraWidget.setClickable(true);
         extraWidget.setOnTouchListener(this);
+    }
+
+    private boolean isMaterial3EnabledForCurrentProject() {
+        return a != null && new Material3LibraryManager(a).isMaterial3Enabled();
+    }
+
+    private boolean isMaterial3View(ViewBean bean) {
+        if (bean == null) return false;
+        String name = bean.convert == null ? "" : bean.convert;
+        String simpleName = name.substring(name.lastIndexOf('.') + 1);
+        return simpleName.startsWith("Material") || simpleName.equals("TextInputEditText")
+                || simpleName.equals("TextInputLayout") || simpleName.equals("CircularProgressIndicator")
+                || simpleName.equals("LinearProgressIndicator") || simpleName.equals("LoadingIndicator")
+                || simpleName.equals("Chip") || simpleName.equals("ChipGroup")
+                || simpleName.equals("Slider") || simpleName.equals("ExtendedFloatingActionButton")
+                || simpleName.equals("ShapeableImageView") || simpleName.equals("MaterialButtonToggleGroup");
+    }
+
+    private boolean requiresAppCompat(ViewBean bean) {
+        if (bean == null) return false;
+        return bean.type == ViewBeans.VIEW_TYPE_WIDGET_MATERIALBUTTON
+                || bean.type == ViewBeans.VIEW_TYPE_WIDGET_RECYCLERVIEW
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_BOTTOMNAVIGATIONVIEW
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_TABLAYOUT
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_VIEWPAGER
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_COLLAPSINGTOOLBARLAYOUT
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_TEXTINPUTLAYOUT
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_SWIPEREFRESHLAYOUT
+                || bean.type == ViewBeans.VIEW_TYPE_LAYOUT_CARDVIEW;
     }
 
     private boolean isViewAnIconBase(View view) {

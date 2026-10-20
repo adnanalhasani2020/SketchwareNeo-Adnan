@@ -74,6 +74,15 @@ public class ViewProperty extends LinearLayout implements Kw {
     private ObjectAnimator showAllHider;
     private boolean showAllVisible = true;
     private String currentlySelectedViewId = null;
+    private OnViewMoveListener onViewMoveListener;
+
+    public interface OnViewMoveListener {
+        boolean onMoveRequested(String sourceViewId, String targetParentId);
+    }
+
+    public void setOnViewMoveListener(OnViewMoveListener listener) {
+        onViewMoveListener = listener;
+    }
 
     public ViewProperty(Context context) {
         super(context);
@@ -327,8 +336,17 @@ public class ViewProperty extends LinearLayout implements Kw {
 
                 ViewTreeDrawerDialog drawer = new ViewTreeDrawerDialog(
                     projectActivityViews,
-                    viewId -> {
-                        a(viewId);
+                    new ViewTreeDrawerDialog.OnViewSelectedListener() {
+                        @Override
+                        public void onSelected(String viewId) {
+                            a(viewId);
+                        }
+
+                        @Override
+                        public boolean onMoveRequested(String sourceViewId, String targetParentId) {
+                            return onViewMoveListener != null
+                                    && onViewMoveListener.onMoveRequested(sourceViewId, targetParentId);
+                        }
                     },
                     currentlySelectedViewId
                 );
@@ -474,7 +492,7 @@ public class ViewProperty extends LinearLayout implements Kw {
             item.setDropDown(isDropDownView);
 
             ViewBean view = views.get(position);
-            item.a(ViewBean.getViewTypeResId(view.type), view.id, isSelected);
+            item.a(ViewBean.getViewTypeResId(view), view.id, ViewBean.getDisplayViewTypeName(view), isSelected);
             return item;
         }
     }

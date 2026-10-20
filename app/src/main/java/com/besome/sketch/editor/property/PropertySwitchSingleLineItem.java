@@ -71,6 +71,18 @@ public class PropertySwitchSingleLineItem extends LinearLayout implements View.O
 
                 case "property_clickable":
                     icon = R.drawable.ic_mtrl_touch;
+                    break;
+                case "property_material_progress_wavy":
+                    icon = R.drawable.ic_mtrl_progress_bar;
+                    break;
+                case "property_nested_scroll_fill_viewport":
+                case "property_nested_scroll_nested_enabled":
+                case "property_nested_scroll_clip_to_padding":
+                    icon = R.drawable.ic_property_nested_scroll;
+                    break;
+                case "property_collapsing_title_enabled":
+                    icon = R.drawable.ic_property_collapsing_toolbar;
+                    break;
             }
             if (propertyMenuItem.getVisibility() == VISIBLE) {
                 ((ImageView) findViewById(R.id.img_icon)).setImageResource(icon);

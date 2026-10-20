@@ -34,6 +34,7 @@ import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.LinearSmoothScroller;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.recyclerview.widget.ItemTouchHelper;
 
 import com.besome.sketch.beans.ViewBean;
 import com.google.android.material.shape.MaterialShapeDrawable;
@@ -52,6 +53,7 @@ public class ViewTreeDrawerDialog extends DialogFragment {
 
     public interface OnViewSelectedListener {
         void onSelected(String viewId);
+        default boolean onMoveRequested(String sourceViewId, String targetParentId) { return false; }
     }
 
     private final ArrayList<ViewBean> currentViews;
@@ -66,9 +68,12 @@ public class ViewTreeDrawerDialog extends DialogFragment {
     private RecyclerView recyclerView;
     private HorizontalScrollView hsvTree;
     private TextView tvNoResults;
+    private ItemTouchHelper itemTouchHelper;
+    private TreeNode draggedNode;
+    private TreeNode dropTargetNode;
 
     public ViewTreeDrawerDialog(ArrayList<ViewBean> views, OnViewSelectedListener listener, @Nullable String selectedViewId) {
-        this.currentViews = views;
+        this.currentViews = views == null ? new ArrayList<>() : new ArrayList<>(views);
         this.listener = listener;
         this.selectedViewId = selectedViewId;
     }
@@ -90,9 +95,12 @@ public class ViewTreeDrawerDialog extends DialogFragment {
         super.onStart();
         Window window = getDialog() != null ? getDialog().getWindow() : null;
         if (window != null) {
-            window.setLayout(SketchwareUtil.dpToPx(320), ViewGroup.LayoutParams.MATCH_PARENT);
-            window.setGravity(Gravity.START);
-            window.setWindowAnimations(R.style.Animation_Design_BottomSheetDialog);
+            DisplayMetrics metrics = new DisplayMetrics();
+            window.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+            int maxWidth = SketchwareUtil.dpToPx(420);
+            int drawerWidth = Math.min((int) (metrics.widthPixels * 0.88f), maxWidth);
+            window.setLayout(drawerWidth, ViewGroup.LayoutParams.MATCH_PARENT);
+            window.setGravity(Gravity.END);
 
             WindowManager.LayoutParams params = window.getAttributes();
             params.dimAmount = 0.4f;
@@ -107,8 +115,8 @@ public class ViewTreeDrawerDialog extends DialogFragment {
         View root = inflater.inflate(R.layout.layout_view_tree_dialog, container, false);
 
         ShapeAppearanceModel shape = ShapeAppearanceModel.builder()
-                .setTopRightCornerSize(SketchwareUtil.dpToPx(24))
-                .setBottomRightCornerSize(SketchwareUtil.dpToPx(24))
+                .setTopLeftCornerSize(SketchwareUtil.dpToPx(24))
+                .setBottomLeftCornerSize(SketchwareUtil.dpToPx(24))
                 .build();
         MaterialShapeDrawable bg = new MaterialShapeDrawable(shape);
         bg.setFillColor(android.content.res.ColorStateList.valueOf(ThemeUtils.getColor(requireContext(), R.attr.colorSurfaceContainerLow)));
@@ -156,7 +164,67 @@ public class ViewTreeDrawerDialog extends DialogFragment {
         adapter = new TreeAdapter();
         recyclerView.setAdapter(adapter);
         adapter.submitList(new ArrayList<>(displayNodes));
-        
+
+        ItemTouchHelper.Callback dragCallback = new ItemTouchHelper.SimpleCallback(
+                ItemTouchHelper.UP | ItemTouchHelper.DOWN | ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT, 0) {
+            @Override
+            public boolean onMove(@NonNull RecyclerView recyclerView,
+                                  @NonNull RecyclerView.ViewHolder sourceHolder,
+                                  @NonNull RecyclerView.ViewHolder targetHolder) {
+                int sourcePosition = sourceHolder.getBindingAdapterPosition();
+                int targetPosition = targetHolder.getBindingAdapterPosition();
+                if (sourcePosition == RecyclerView.NO_POSITION || targetPosition == RecyclerView.NO_POSITION
+                        || sourcePosition >= adapter.currentList.size() || targetPosition >= adapter.currentList.size()) {
+                    dropTargetNode = null;
+                    return false;
+                }
+                if (draggedNode == null) draggedNode = adapter.currentList.get(sourcePosition);
+                TreeNode target = adapter.currentList.get(targetPosition);
+                if (isValidDropTarget(draggedNode, target)) {
+                    dropTargetNode = target;
+                    return true;
+                }
+                dropTargetNode = null;
+                return false;
+            }
+
+            @Override public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) { }
+
+            @Override
+            public void onSelectedChanged(RecyclerView.ViewHolder viewHolder, int actionState) {
+                super.onSelectedChanged(viewHolder, actionState);
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && viewHolder != null) {
+                    int position = viewHolder.getBindingAdapterPosition();
+                    if (position != RecyclerView.NO_POSITION && position < adapter.currentList.size()) {
+                        draggedNode = adapter.currentList.get(position);
+                    }
+                    dropTargetNode = null;
+                }
+            }
+
+            @Override
+            public void clearView(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder) {
+                super.clearView(recyclerView, viewHolder);
+                TreeNode source = draggedNode;
+                TreeNode target = dropTargetNode;
+                draggedNode = null;
+                dropTargetNode = null;
+                if (source == null || target == null) return;
+                if (!isValidDropTarget(source, target)) {
+                    SketchwareUtil.toastError("Choose a valid container; parent/child cycles are not allowed");
+                    return;
+                }
+                boolean moved = listener != null && listener.onMoveRequested(source.viewBean.id, target.viewBean.id);
+                if (moved) {
+                    dismiss();
+                } else {
+                    SketchwareUtil.toastError("The view could not be moved into that container");
+                }
+            }
+        };
+        itemTouchHelper = new ItemTouchHelper(dragCallback);
+        itemTouchHelper.attachToRecyclerView(recyclerView);
+
         scrollToSelected();
 
         etSearch.addTextChangedListener(new TextWatcher() {
@@ -181,6 +249,7 @@ public class ViewTreeDrawerDialog extends DialogFragment {
         List<ViewBean> roots = new ArrayList<>();
 
         for (ViewBean bean : currentViews) {
+            if (bean == null || bean.id == null || bean.id.isEmpty()) continue;
             if (bean.parent == null || bean.parent.equals("root") || bean.parent.isEmpty()) {
                 roots.add(bean);
             } else {
@@ -238,8 +307,15 @@ public class ViewTreeDrawerDialog extends DialogFragment {
     private boolean markMatchingNodes(List<TreeNode> nodes, String query) {
         boolean anyMatch = false;
         for (TreeNode node : nodes) {
-            boolean selfMatch = node.viewBean.id.toLowerCase(Locale.getDefault()).contains(query)
-                    || ViewBean.getViewTypeName(node.viewBean.type).toLowerCase(Locale.getDefault()).contains(query);
+            if (node == null || node.viewBean == null) continue;
+            String id = node.viewBean.id == null ? "" : node.viewBean.id;
+            String className = node.viewBean.convert == null ? "" : node.viewBean.convert;
+            int classSeparator = className.lastIndexOf('.');
+            if (classSeparator >= 0) className = className.substring(classSeparator + 1);
+            String displayType = ViewBean.getDisplayViewTypeName(node.viewBean);
+            boolean selfMatch = id.toLowerCase(Locale.getDefault()).contains(query)
+                    || displayType.toLowerCase(Locale.getDefault()).contains(query)
+                    || className.toLowerCase(Locale.getDefault()).contains(query);
             boolean childMatch = markMatchingNodes(node.children, query);
             node.matchesSearch = selfMatch || childMatch;
             if (node.matchesSearch) {
@@ -291,6 +367,37 @@ public class ViewTreeDrawerDialog extends DialogFragment {
                 break;
             }
         }
+    }
+
+    private boolean isValidDropTarget(TreeNode source, TreeNode target) {
+        if (source == null || target == null || source.viewBean == null || target.viewBean == null) return false;
+        if (source.viewBean.id == null || target.viewBean.id == null
+                || source.viewBean.id.equals(target.viewBean.id) || source.viewBean.id.startsWith("_")) return false;
+        if (!isContainer(target.viewBean)) return false;
+        return !containsDescendant(source, target.viewBean.id);
+    }
+
+    private boolean containsDescendant(TreeNode source, String id) {
+        if (source.viewBean != null && id.equals(source.viewBean.id)) return true;
+        for (TreeNode child : source.children) if (containsDescendant(child, id)) return true;
+        return false;
+    }
+
+    private boolean isContainer(ViewBean bean) {
+        String convert = bean.convert == null ? "" : bean.convert;
+        String name = convert.substring(convert.lastIndexOf('.') + 1);
+        return switch (name) {
+            case "LinearLayout", "RelativeLayout", "ConstraintLayout", "CoordinatorLayout", "FrameLayout",
+                 "ScrollView", "NestedScrollView", "HorizontalScrollView", "RadioGroup", "TableLayout",
+                 "TableRow", "GridLayout", "CardView", "MaterialCardView", "CollapsingToolbarLayout",
+                 "TextInputLayout", "SwipeRefreshLayout", "TabLayout", "BottomNavigationView", "ChipGroup",
+                 "MaterialButtonToggleGroup", "ViewPager", "ViewPager2", "RecyclerView", "ListView", "GridView" -> true;
+            default -> false;
+        };
+    }
+
+    private int getViewIcon(ViewBean bean) {
+        return ViewBean.getViewTypeResId(bean);
     }
 
     public static class TreeIndentView extends View {
@@ -452,7 +559,7 @@ public class ViewTreeDrawerDialog extends DialogFragment {
                     imgArrow.setOnClickListener(null);
                 }
 
-                imgIcon.setImageResource(ViewBean.getViewTypeResId(node.viewBean.type));
+                imgIcon.setImageResource(getViewIcon(node.viewBean));
                 int iconTint = isSelected ? ThemeUtils.getColor(requireContext(), R.attr.colorPrimary)
                         : ThemeUtils.getColor(requireContext(), R.attr.colorOnSurfaceVariant);
                 imgIcon.setColorFilter(iconTint);
@@ -461,7 +568,7 @@ public class ViewTreeDrawerDialog extends DialogFragment {
                         ThemeUtils.getColor(requireContext(), R.attr.colorPrimaryContainer),
                         ThemeUtils.getColor(requireContext(), R.attr.colorPrimary)));
 
-                String typeName = ViewBean.getViewTypeName(node.viewBean.type);
+                String typeName = ViewBean.getDisplayViewTypeName(node.viewBean);
                 if (node.viewBean.customView != null && !node.viewBean.customView.isEmpty() && !node.viewBean.customView.equals("none")) {
                     typeName += " (" + node.viewBean.customView + ")";
                 }
@@ -478,8 +585,17 @@ public class ViewTreeDrawerDialog extends DialogFragment {
                 }
 
                 rootLayout.setOnClickListener(v -> {
-                    listener.onSelected(node.viewBean.id);
-                    dismiss();
+                    if (listener != null && node.viewBean != null && node.viewBean.id != null) {
+                        listener.onSelected(node.viewBean.id);
+                        dismiss();
+                    }
+                });
+                rootLayout.setOnLongClickListener(v -> {
+                    if (itemTouchHelper != null) {
+                        itemTouchHelper.startDrag(this);
+                        return true;
+                    }
+                    return false;
                 });
             }
 

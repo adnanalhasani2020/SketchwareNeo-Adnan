@@ -143,7 +143,7 @@ public class PropertyCustomViewItem extends RelativeLayout implements View.OnCli
     @Override
     public void onClick(View var1) {
         if (!mB.a()) {
-            if ("property_custom_view_listview".equals(key)) {
+            if ("property_custom_view_listview".equals(key) || "property_include_layout".equals(key)) {
                 a();
             }
         }

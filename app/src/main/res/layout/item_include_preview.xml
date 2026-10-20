@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/include_preview_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="8dp"
+    android:background="@drawable/bg_include_preview_root"
+    android:importantForAccessibility="no">
+
+    <TextView
+        android:id="@+id/include_preview_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Included layout"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="11sp"
+        android:paddingBottom="6dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:importantForAccessibility="no">
+
+        <TextView
+            android:id="@+id/include_preview_item_1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="28dp"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="5dp"
+            android:text="TextView"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="11sp"
+            android:background="@drawable/bg_include_preview_item" />
+
+        <TextView
+            android:id="@+id/include_preview_item_2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="28dp"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="5dp"
+            android:text="Button"
+            android:textColor="?attr/colorOnPrimary"
+            android:textSize="11sp"
+            android:background="@drawable/bg_include_preview_button" />
+
+        <TextView
+            android:id="@+id/include_preview_item_3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="28dp"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="5dp"
+            android:text="Text field"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="11sp"
+            android:background="@drawable/bg_include_preview_field" />
+
+        <TextView
+            android:id="@+id/include_preview_more"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="?attr/colorPrimary"
+            android:textSize="10sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</LinearLayout>

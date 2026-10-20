@@ -204,7 +204,8 @@ public final class AttributeInputHelper {
     private static void showResourcePicker(Activity activity, String scId, EditText inputValue) {
         PropertyResourceItem picker = new PropertyResourceItem(activity, true, scId, false);
         picker.showPickerDialog("Select drawable", android.R.drawable.ic_menu_gallery, Helper.getText(inputValue),
-                selected -> inputValue.setText("@drawable/" + selected));
+                selected -> inputValue.setText(selected == null || "NONE".equalsIgnoreCase(selected)
+                        ? "" : "@drawable/" + selected));
     }
 
     private static void setupBackgroundInput(Activity activity, String scId, TextInputLayout inputValueLayout, EditText inputValue) {

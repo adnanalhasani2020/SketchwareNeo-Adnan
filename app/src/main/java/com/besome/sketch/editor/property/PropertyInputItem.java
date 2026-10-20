@@ -72,6 +72,7 @@ import pro.sketchware.lib.base.BaseTextWatcher;
 import pro.sketchware.lib.highlighter.SyntaxScheme;
 import pro.sketchware.lib.validator.PropertyNameValidator;
 import pro.sketchware.utility.FileUtil;
+import pro.sketchware.utility.SketchwareUtil;
 
 @SuppressLint("ViewConstructor")
 public class PropertyInputItem extends RelativeLayout implements View.OnClickListener {
@@ -93,6 +94,42 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
     private Kw valueChangeListener;
     private List<String> keysList = new ArrayList<>();
     private ViewBean bean;
+    // Explicit property-backed values added through Custom attributes are tracked per view so
+    // later edits to other properties do not silently replace the user's override.
+    private final Map<String, LinkedHashMap<String, String>> explicitPropertyAttributeOverridesByView = new HashMap<>();
+    private String lastOverrideViewKey;
+    private String lastOverrideScopeKey;
+
+    LinkedHashMap<String, String> getExplicitPropertyAttributeOverrides() {
+        LinkedHashMap<String, String> overrides = explicitPropertyAttributeOverridesByView.get(getActiveOverrideViewKey());
+        return overrides == null ? new LinkedHashMap<>() : new LinkedHashMap<>(overrides);
+    }
+
+    private String getOverrideScopeKey() {
+        String fileName = projectFileBean == null ? "" : projectFileBean.getXmlName();
+        return (sc_id == null ? "" : sc_id) + "|" + fileName;
+    }
+
+    private String getOverrideViewKey(ViewBean target) {
+        return getOverrideScopeKey() + "|" + (target == null || target.id == null ? "" : target.id);
+    }
+
+    private String getActiveOverrideViewKey() {
+        String scope = getOverrideScopeKey();
+        String activeKey = getOverrideViewKey(bean);
+        if (lastOverrideViewKey != null && lastOverrideScopeKey != null
+                && lastOverrideScopeKey.equals(scope) && !lastOverrideViewKey.equals(activeKey)) {
+            LinkedHashMap<String, String> oldOverrides = explicitPropertyAttributeOverridesByView.remove(lastOverrideViewKey);
+            if (oldOverrides != null && !oldOverrides.isEmpty()) {
+                LinkedHashMap<String, String> existing = explicitPropertyAttributeOverridesByView.get(activeKey);
+                if (existing != null) oldOverrides.putAll(existing);
+                explicitPropertyAttributeOverridesByView.put(activeKey, oldOverrides);
+            }
+        }
+        lastOverrideScopeKey = scope;
+        lastOverrideViewKey = activeKey;
+        return activeKey;
+    }
 
     public PropertyInputItem(Context context, boolean z) {
         super(context);
@@ -100,6 +137,7 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
     }
 
     private void setIcon(ImageView imageView) {
+        icon = 0;
         switch (key) {
             case "property_id" -> icon = R.drawable.ic_mtrl_id;
             case "property_text" -> icon = R.drawable.ic_mtrl_text_select;
@@ -119,8 +157,30 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
             case "property_text_size" -> icon = R.drawable.ic_mtrl_font;
             case "property_elevation" -> icon = R.drawable.ic_mtrl_elevation;
             case "property_visibility" -> icon = R.drawable.ic_mtrl_visibility;
+            case "property_material_icon" -> icon = R.drawable.ic_property_material_icon;
+            case "property_material_icon_size" -> icon = R.drawable.ic_property_material_icon_size;
+            case "property_material_corner_radius" -> icon = R.drawable.ic_property_material_corner_radius;
+            case "property_material_slider_value_from", "property_material_slider_value_to",
+                 "property_material_slider_value", "property_material_slider_step_size" -> icon = R.drawable.ic_property_material_slider;
+            case "property_material_slider_thumb_radius", "property_material_slider_track_height",
+                 "property_material_slider_halo_radius", "property_material_slider_label_behavior",
+                 "property_material_slider_style" -> icon = R.drawable.ic_property_material_slider;
+            case "property_nested_scroll_fill_viewport", "property_nested_scroll_nested_enabled",
+                 "property_nested_scroll_clip_to_padding", "property_nested_scroll_over_scroll_mode",
+                 "property_nested_scroll_behavior" -> icon = R.drawable.ic_property_nested_scroll;
+            case "property_collapsing_title", "property_collapsing_title_enabled",
+                 "property_collapsing_scrim_animation_duration", "property_collapsing_scrim_visible_height_trigger",
+                 "property_collapsing_expanded_title_margin_start", "property_collapsing_expanded_title_margin_end",
+                 "property_collapsing_expanded_title_margin_top", "property_collapsing_expanded_title_margin_bottom",
+                 "property_collapsing_toolbar_id", "property_collapsing_content_scrim",
+                 "property_collapsing_status_bar_scrim", "property_collapsing_title_collapse_mode",
+                 "property_collapsing_parallax_multiplier" -> icon = R.drawable.ic_property_collapsing_toolbar;
         }
+        if (icon == 0) icon = R.drawable.ic_mtrl_code;
         imageView.setImageResource(icon);
+        imageView.setImageTintList(android.content.res.ColorStateList.valueOf(
+                com.google.android.material.color.MaterialColors.getColor(
+                        imageView, R.attr.colorOnSurfaceVariant)));
     }
 
     public void setTypeView(String typeView) {
@@ -145,6 +205,9 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
         if (propertyMenuItem.getVisibility() == VISIBLE) {
             setIcon(findViewById(R.id.img_icon));
             ((TextView) findViewById(R.id.tv_title)).setText(tvName.getText());
+            propertyMenuItem.setClickable(true);
+            propertyMenuItem.setFocusable(true);
+            propertyMenuItem.setOnClickListener(this);
             return;
         }
         setIcon(imgLeftIcon);
@@ -160,12 +223,23 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
     }
 
     public void setBean(ViewBean bean) {
+        boolean sameBean = this.bean == bean;
         this.bean = bean;
+        if (sameBean) {
+            // This also migrates per-view overrides if this same bean was renamed in place.
+            getActiveOverrideViewKey();
+        } else {
+            lastOverrideScopeKey = getOverrideScopeKey();
+            lastOverrideViewKey = getOverrideViewKey(bean);
+        }
     }
 
     @Override
     public void onClick(View v) {
-        if (!mB.a()) {
+        // Specialized Material/container properties open their own safe dialog or picker.
+        // Do not let the legacy generic input guard swallow these newly-added property tiles;
+        // this was the reason their cards appeared inert in the editor.
+        if (!mB.a() || isSpecializedPropertyAction()) {
             switch (key) {
                 case "property_id" -> showViewIdDialog();
                 case "property_text", "property_hint" -> showTextInputDialog(9999, false);
@@ -232,10 +306,144 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
                         Float.parseFloat(value.isEmpty() ? "0" : value.replaceAll("[^0-9.]", "")),
                         0f, 50f, 1f, true);
                 case "property_visibility" -> showVisibilityDialog();
+                case "property_material_icon" -> showMaterialIconPicker();
+                case "property_material_icon_size" -> showDimensionSlider(24f, 1f, 96f);
+                case "property_material_corner_radius" -> showDimensionSlider(8f, 0f, 100f);
+                case "property_nested_scroll_behavior" -> showNestedScrollBehaviorDialog();
+                case "property_material_slider_value_from" -> showHybridSliderDialog(Helper.getText(tvName), parseNumber(value, 0f), -10000f, 10000f, 1f, false);
+                case "property_material_slider_value_to" -> showHybridSliderDialog(Helper.getText(tvName), parseNumber(value, 100f), 1f, 10000f, 1f, false);
+                case "property_material_slider_step_size" -> showHybridSliderDialog(Helper.getText(tvName), parseNumber(value, 0f), 0f, 1000f, 0.1f, false);
+                case "property_material_slider_value" -> {
+                    float maxValue = bean == null ? 100f : Math.max(1f, parseNumber(getInjectedAttribute("android:valueTo"), 100f));
+                    showHybridSliderDialog(Helper.getText(tvName), parseNumber(value, 0f), -10000f, maxValue, 1f, false);
+                }
+                case "property_material_slider_thumb_radius", "property_material_slider_track_height", "property_material_slider_halo_radius" -> showDimensionSlider(Helper.getText(tvName), parseNumber(value, 8f), 0f, 64f);
+                case "property_collapsing_title", "property_collapsing_toolbar_id",
+                     "property_collapsing_content_scrim", "property_collapsing_status_bar_scrim" -> showTextInputDialog(9999, false);
+                case "property_collapsing_scrim_animation_duration" -> showHybridSliderDialog(Helper.getText(tvName), parseNumber(value, 600f), 0f, 5000f, 50f, true);
+                case "property_collapsing_scrim_visible_height_trigger" -> showDimensionSlider(Helper.getText(tvName), parseNumber(value, 0f), 0f, 1000f);
+                case "property_collapsing_expanded_title_margin_start", "property_collapsing_expanded_title_margin_end",
+                     "property_collapsing_expanded_title_margin_top", "property_collapsing_expanded_title_margin_bottom" -> showDimensionSlider(Helper.getText(tvName), parseNumber(value, 0f), 0f, 200f);
                 case "property_convert" -> showAutoCompleteDialog();
                 case "property_inject" -> showInjectDialog();
             }
         }
+    }
+
+    private boolean isSpecializedPropertyAction() {
+        return key != null && (key.startsWith("property_material_")
+                || key.startsWith("property_nested_scroll_")
+                || key.startsWith("property_collapsing_"));
+    }
+
+    private float parseNumber(String raw, float fallback) {
+        if (raw == null || raw.trim().isEmpty()) return fallback;
+        try {
+            String cleaned = raw.trim().replaceAll("[^0-9.-]", "");
+            if (cleaned.isEmpty() || cleaned.equals(".") || cleaned.equals("-")) return fallback;
+            return Float.parseFloat(cleaned);
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private String getInjectedAttribute(String attributeName) {
+        if (bean == null || bean.inject == null) return "";
+        try {
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            XmlPullParser parser = factory.newPullParser();
+            parser.setInput(new StringReader("<tag " + bean.inject + "></tag>"));
+            int event = parser.getEventType();
+            while (event != XmlPullParser.END_DOCUMENT) {
+                if (event == XmlPullParser.START_TAG) {
+                    for (int i = 0; i < parser.getAttributeCount(); i++) {
+                        String localName = parser.getAttributeName(i);
+                        String prefix = parser.getAttributePrefix(i);
+                        String qualifiedName = prefix == null || prefix.isEmpty() ? localName : prefix + ":" + localName;
+                        if (attributeName.equals(localName) || attributeName.equals(qualifiedName)
+                                || attributeName.endsWith(":" + localName)) return parser.getAttributeValue(i);
+                    }
+                }
+                event = parser.next();
+            }
+        } catch (Exception ignored) { }
+        return "";
+    }
+
+    private void showDimensionSlider(float fallback, float min, float max) {
+        showDimensionSlider(Helper.getText(tvName), parseNumber(value, fallback), min, max);
+    }
+
+    private void showDimensionSlider(String title, float current, float min, float max) {
+        showHybridSliderDialog(title, Math.max(min, Math.min(max, current)), min, max, 1f, true);
+    }
+
+    private void showMaterialIconPicker() {
+        if (sc_id == null || sc_id.trim().isEmpty()) {
+            SketchwareUtil.toastError("Open a project before selecting a Material icon.");
+            return;
+        }
+        String current = value == null ? "" : value.trim();
+        current = current.replaceFirst("^@(?:drawable|mipmap)/", "");
+        PropertyResourceItem picker = new PropertyResourceItem(getContext(), false, sc_id, false);
+        picker.showPickerDialog(Helper.getText(tvName), R.drawable.ic_property_material_icon, current, selected -> {
+            String resolved = selected == null || selected.isEmpty() || "NONE".equalsIgnoreCase(selected)
+                    ? "" : selected.startsWith("@") ? selected : "@drawable/" + selected;
+            setValue(resolved);
+            if (valueChangeListener != null) valueChangeListener.a(key, resolved);
+        }, false);
+    }
+
+    private void showNestedScrollBehaviorDialog() {
+        if (bean == null) {
+            SketchwareUtil.toastError("Select a NestedScrollView before editing its scrolling behavior.");
+            return;
+        }
+        View dialogView = LayoutInflater.from(getContext()).inflate(R.layout.dialog_nested_scroll_behavior, null, false);
+        android.widget.CompoundButton fillViewport = dialogView.findViewById(R.id.switch_fill_viewport);
+        android.widget.CompoundButton nestedScrolling = dialogView.findViewById(R.id.switch_nested_scrolling);
+        android.widget.CompoundButton clipToPadding = dialogView.findViewById(R.id.switch_clip_to_padding);
+        MaterialAutoCompleteTextView overScrollMode = dialogView.findViewById(R.id.input_over_scroll_mode);
+
+        fillViewport.setChecked(Boolean.parseBoolean(getInjectedAttribute("android:fillViewport")));
+        String nestedValue = getInjectedAttribute("android:nestedScrollingEnabled");
+        nestedScrolling.setChecked(nestedValue.isEmpty() || Boolean.parseBoolean(nestedValue));
+        String clipValue = getInjectedAttribute("android:clipToPadding");
+        clipToPadding.setChecked(clipValue.isEmpty() || Boolean.parseBoolean(clipValue));
+
+        String[] labels = {
+                Helper.getResString(R.string.property_nested_scroll_over_scroll_always),
+                Helper.getResString(R.string.property_nested_scroll_over_scroll_if_content_scrolls),
+                Helper.getResString(R.string.property_nested_scroll_over_scroll_never)
+        };
+        String[] values = {"always", "ifContentScrolls", "never"};
+        overScrollMode.setAdapter(new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, labels));
+        String storedMode = getInjectedAttribute("android:overScrollMode");
+        int selectedMode = 1;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(storedMode)) { selectedMode = i; break; }
+        }
+        overScrollMode.setText(labels[selectedMode], false);
+        overScrollMode.setOnClickListener(v -> overScrollMode.showDropDown());
+
+        new MaterialAlertDialogBuilder(getContext())
+                .setTitle(Helper.getText(tvName))
+                .setIcon(icon)
+                .setView(dialogView)
+                .setNegativeButton(R.string.common_word_cancel, null)
+                .setPositiveButton(R.string.common_word_save, (dialog, which) -> {
+                    int modeIndex = 1;
+                    String selectedLabel = Helper.getText(overScrollMode).trim();
+                    for (int i = 0; i < labels.length; i++) {
+                        if (labels[i].equals(selectedLabel)) { modeIndex = i; break; }
+                    }
+                    // This is an editor-only payload. ViewPropertyItems expands it to real XML attributes.
+                    String config = fillViewport.isChecked() + "|" + nestedScrolling.isChecked() + "|"
+                            + clipToPadding.isChecked() + "|" + values[modeIndex];
+                    setValue(config);
+                    if (valueChangeListener != null) valueChangeListener.a(key, config);
+                })
+                .show();
     }
 
     private void showVisibilityDialog() {
@@ -786,11 +994,18 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
                 break;
 
             case "8":
+                prioritizedSuggestions.addAll(Arrays.asList(
+                        "ProgressBar",
+                        "com.google.android.material.progressindicator.CircularProgressIndicator",
+                        "com.google.android.material.progressindicator.LinearProgressIndicator",
+                        "com.google.android.material.progressindicator.LoadingIndicator"
+                ));
+                break;
+
             case "14":
                 prioritizedSuggestions.addAll(Arrays.asList(
-                        "ProgressBar", "SeekBar",
-                        "HorizontalScrollBar", "VerticalSeekBar",
-                        "IndeterminateProgressBar"
+                        "SeekBar", "com.google.android.material.slider.Slider",
+                        "HorizontalScrollBar", "VerticalSeekBar"
                 ));
                 break;
 
@@ -827,11 +1042,7 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
                 break;
 
             case "39":
-                prioritizedSuggestions.addAll(Arrays.asList(
-                        "androidx.swiperefreshlayout.widget.SwipeRefreshLayout",
-                        "com.google.android.material.progressindicator.CircularProgressIndicator",
-                        "com.google.android.material.progressindicator.LinearProgressIndicator"
-                ));
+                prioritizedSuggestions.add("androidx.swiperefreshlayout.widget.SwipeRefreshLayout");
                 break;
         }
 
@@ -851,67 +1062,208 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
 
     private List<String> populateAttributes() {
         List<String> attrs = new ArrayList<>();
-        
-        if (bean != null) {
-            var simpleName = getSimpleName(bean);
-            var classInfo = bean.getClassInfo();
-            
-            if (classInfo.b("CardView")) {
-                attrs.add("app:cardBackgroundColor");
-                attrs.add("app:cardElevation");
-                attrs.add("app:cardCornerRadius");
-                attrs.add("app:cardUseCompatPadding");
-                if (simpleName.equals("MaterialCardView")) {
-                    attrs.add("app:strokeColor");
-                    attrs.add("app:strokeWidth");
-                }
-            } else if (classInfo.b("MaterialButton") || classInfo.b("Button")) {
-                attrs.add("app:cornerRadius");
-                attrs.add("app:backgroundTint");
-                attrs.add("app:strokeWidth");
+
+        if (bean == null) return attrs;
+        var simpleName = getSimpleName(bean);
+        var classInfo = bean.getClassInfo();
+
+        if (classInfo.b("CardView") || simpleName.equals("MaterialCardView")) {
+            attrs.add("app:cardBackgroundColor");
+            attrs.add("app:cardElevation");
+            attrs.add("app:cardCornerRadius");
+            attrs.add("app:cardUseCompatPadding");
+            if (simpleName.equals("MaterialCardView")) {
                 attrs.add("app:strokeColor");
-                attrs.add("app:icon");
-                attrs.add("app:iconTint");
-                attrs.add("app:iconGravity");
-                attrs.add("app:iconSize");
-                attrs.add("app:iconPadding");
-                attrs.add("app:iconTintMode");
-            } else if (classInfo.b("ImageView") || classInfo.b("CircleImageView")) {
-                attrs.add("app:tint");
-                if (classInfo.b("CircleImageView")) {
-                    attrs.add("app:civ_border_width");
-                    attrs.add("app:civ_border_color");
-                    attrs.add("app:civ_circle_background_color");
-                }
-            } else if (classInfo.b("Switch") || classInfo.b("CheckBox") || classInfo.b("RadioButton")) {
-                attrs.add("app:buttonTint");
-                if (classInfo.b("Switch")) {
-                    attrs.add("app:thumbTint");
-                    attrs.add("app:trackTint");
-                }
-            } else if (classInfo.b("ProgressBar") || classInfo.b("SeekBar")) {
-                attrs.add("app:indicatorColor");
-                attrs.add("app:trackColor");
-                attrs.add("app:trackThickness");
-                if (classInfo.b("SeekBar")) {
-                    attrs.add("app:thumbColor");
-                    attrs.add("app:haloColor");
-                    attrs.add("app:tickColor");
-                }
-            } else if (classInfo.b("TabLayout")) {
-                attrs.add("app:tabIndicatorColor");
-                attrs.add("app:tabIndicatorHeight");
-                attrs.add("app:tabTextColor");
-                attrs.add("app:tabSelectedTextColor");
-                attrs.add("app:tabMode");
-                attrs.add("app:tabGravity");
-            } else if (classInfo.b("BottomNavigationView")) {
-                attrs.add("app:itemIconTint");
-                attrs.add("app:itemTextColor");
-                attrs.add("app:itemRippleColor");
+                attrs.add("app:strokeWidth");
+                attrs.add("app:rippleColor");
+                attrs.add("app:checkedIconVisible");
             }
         }
-        return attrs;
+
+        if (classInfo.b("TextView")) {
+            attrs.add("android:drawableStart");
+            attrs.add("android:drawableTop");
+            attrs.add("android:drawableEnd");
+            attrs.add("android:drawableBottom");
+            attrs.add("android:drawableLeft");
+            attrs.add("android:drawableRight");
+        }
+
+        if (classInfo.b("ImageView") || simpleName.equals("ShapeableImageView")) {
+            attrs.add("android:src");
+        }
+
+        if (classInfo.b("MaterialButton") || classInfo.b("Button")
+                || simpleName.equals("ExtendedFloatingActionButton")) {
+            attrs.add("style");
+            attrs.add("app:cornerRadius");
+            attrs.add("app:backgroundTint");
+            attrs.add("app:strokeWidth");
+            attrs.add("app:strokeColor");
+            attrs.add("app:icon");
+            attrs.add("app:iconTint");
+            attrs.add("app:iconGravity");
+            attrs.add("app:iconSize");
+            attrs.add("app:iconPadding");
+            attrs.add("app:iconTintMode");
+            attrs.add("app:rippleColor");
+            attrs.add("app:insetTop");
+            attrs.add("app:insetBottom");
+        }
+
+        if (classInfo.b("TextInputLayout") || simpleName.equals("TextInputLayout")) {
+            attrs.add("app:boxBackgroundMode");
+            attrs.add("app:boxBackgroundColor");
+            attrs.add("app:boxStrokeColor");
+            attrs.add("app:boxStrokeWidth");
+            attrs.add("app:boxStrokeWidthFocused");
+            attrs.add("app:boxCornerRadiusTopStart");
+            attrs.add("app:boxCornerRadiusTopEnd");
+            attrs.add("app:boxCornerRadiusBottomStart");
+            attrs.add("app:boxCornerRadiusBottomEnd");
+            attrs.add("app:hintEnabled");
+            attrs.add("app:helperText");
+            attrs.add("app:errorEnabled");
+            attrs.add("app:endIconMode");
+            attrs.add("app:startIconDrawable");
+            attrs.add("app:endIconDrawable");
+            attrs.add("app:counterEnabled");
+        }
+
+        if (simpleName.equals("MaterialAutoCompleteTextView") || simpleName.equals("TextInputEditText")) {
+            attrs.add("app:simpleItems");
+            attrs.add("app:dropDownBackgroundTint");
+        }
+
+        if (classInfo.b("Chip") || simpleName.equals("Chip")) {
+            attrs.add("app:chipBackgroundColor");
+            attrs.add("app:chipStrokeColor");
+            attrs.add("app:chipStrokeWidth");
+            attrs.add("app:chipCornerRadius");
+            attrs.add("app:chipMinHeight");
+            attrs.add("app:chipIcon");
+            attrs.add("app:chipIconTint");
+            attrs.add("app:checkedIcon");
+            attrs.add("app:checkedIconVisible");
+            attrs.add("app:closeIcon");
+            attrs.add("app:closeIconTint");
+            attrs.add("app:rippleColor");
+        }
+
+        if (classInfo.b("ChipGroup") || classInfo.b("MaterialButtonToggleGroup")
+                || simpleName.equals("ChipGroup") || simpleName.equals("MaterialButtonToggleGroup")) {
+            attrs.add("app:singleSelection");
+            attrs.add("app:selectionRequired");
+            attrs.add("app:checkedButton");
+            attrs.add("app:chipSpacingHorizontal");
+            attrs.add("app:chipSpacingVertical");
+            attrs.add("app:singleLine");
+        }
+
+        if (classInfo.b("ImageView") || classInfo.b("CircleImageView") || simpleName.equals("ShapeableImageView")) {
+            attrs.add("app:tint");
+            if (classInfo.b("CircleImageView")) {
+                attrs.add("app:civ_border_width");
+                attrs.add("app:civ_border_color");
+                attrs.add("app:civ_circle_background_color");
+            }
+            if (simpleName.equals("ShapeableImageView")) {
+                attrs.add("app:shapeAppearance");
+                attrs.add("app:shapeAppearanceOverlay");
+                attrs.add("app:strokeColor");
+                attrs.add("app:strokeWidth");
+            }
+        }
+
+        if (classInfo.b("Switch") || classInfo.b("CheckBox") || classInfo.b("RadioButton")
+                || simpleName.equals("MaterialSwitch") || simpleName.equals("MaterialCheckBox")
+                || simpleName.equals("MaterialRadioButton")) {
+            attrs.add("app:buttonTint");
+            attrs.add("app:buttonIcon");
+            attrs.add("app:buttonIconTint");
+            if (classInfo.b("Switch") || simpleName.equals("MaterialSwitch")) {
+                attrs.add("app:thumbTint");
+                attrs.add("app:trackTint");
+                attrs.add("app:thumbIcon");
+                attrs.add("app:thumbIconTint");
+                attrs.add("app:trackDecorationTint");
+            }
+        }
+
+        if (classInfo.b("ProgressBar") || classInfo.b("SeekBar")
+                || simpleName.equals("CircularProgressIndicator")
+                || simpleName.equals("LinearProgressIndicator")
+                || simpleName.equals("LoadingIndicator")) {
+            attrs.add("app:indicatorColor");
+            attrs.add("app:trackColor");
+            attrs.add("app:trackThickness");
+            if (simpleName.equals("CircularProgressIndicator")) {
+                attrs.add("app:indicatorSize");
+                attrs.add("app:trackCornerRadius");
+                attrs.add("app:indicatorDirectionCircular");
+            }
+            if (simpleName.equals("LinearProgressIndicator")) {
+                attrs.add("app:trackCornerRadius");
+                attrs.add("app:indeterminateAnimationType");
+                attrs.add("app:showAnimationBehavior");
+                attrs.add("app:hideAnimationBehavior");
+                attrs.add("app:indicatorDirectionLinear");
+            }
+            if (classInfo.b("SeekBar") || simpleName.equals("Slider") || simpleName.equals("MaterialSlider")) {
+                attrs.add("style");
+                attrs.add("android:valueFrom");
+                attrs.add("android:valueTo");
+                attrs.add("android:stepSize");
+                attrs.add("android:value");
+                attrs.add("app:labelBehavior");
+                attrs.add("app:thumbColor");
+                attrs.add("app:haloColor");
+                attrs.add("app:tickColorActive");
+                attrs.add("app:tickColorInactive");
+                attrs.add("app:trackColorActive");
+                attrs.add("app:trackColorInactive");
+                attrs.add("app:thumbRadius");
+                attrs.add("app:haloRadius");
+                attrs.add("app:trackHeight");
+            }
+        }
+
+        if (simpleName.equals("NestedScrollView")) {
+            attrs.add("android:fillViewport");
+            attrs.add("android:nestedScrollingEnabled");
+            attrs.add("android:clipToPadding");
+            attrs.add("android:overScrollMode");
+        }
+
+        if (simpleName.equals("CollapsingToolbarLayout")) {
+            attrs.add("app:title");
+            attrs.add("app:titleEnabled");
+            attrs.add("app:titleCollapseMode");
+            attrs.add("app:scrimAnimationDuration");
+            attrs.add("app:scrimVisibleHeightTrigger");
+            attrs.add("app:expandedTitleMarginStart");
+            attrs.add("app:expandedTitleMarginEnd");
+            attrs.add("app:expandedTitleMarginTop");
+            attrs.add("app:expandedTitleMarginBottom");
+            attrs.add("app:toolbarId");
+            attrs.add("app:contentScrim");
+            attrs.add("app:statusBarScrim");
+        }
+
+        if (classInfo.b("TabLayout")) {
+            attrs.add("app:tabIndicatorColor");
+            attrs.add("app:tabIndicatorHeight");
+            attrs.add("app:tabTextColor");
+            attrs.add("app:tabSelectedTextColor");
+            attrs.add("app:tabMode");
+            attrs.add("app:tabGravity");
+        }
+        if (classInfo.b("BottomNavigationView")) {
+            attrs.add("app:itemIconTint");
+            attrs.add("app:itemTextColor");
+            attrs.add("app:itemRippleColor");
+        }
+        return attrs.stream().distinct().collect(Collectors.toList());
     }
 
     private String getSimpleName(ViewBean bean) {
@@ -1086,16 +1438,109 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
         dialog.setOnDismissListener(d -> showInjectDialog());
     }
 
+    private boolean isPropertyBackedAttribute(String name) {
+        if (name == null) return false;
+        if ("android:elevation".equals(name) || "android:visibility".equals(name)
+                || "elevation".equals(name) || "visibility".equals(name)) return true;
+        if (bean == null || bean.convert == null) return false;
+
+        String convert = bean.convert;
+        int classSeparator = convert.lastIndexOf('.');
+        String simpleName = classSeparator >= 0 ? convert.substring(classSeparator + 1) : convert;
+        String local = name.contains(":") ? name.substring(name.indexOf(':') + 1) : name;
+        boolean materialButton = simpleName.endsWith("MaterialButton") || simpleName.equals("MaterialIconButton")
+                || simpleName.endsWith("ExtendedFloatingActionButton");
+        if (materialButton && ("style".equals(name) || "icon".equals(local)
+                || "iconGravity".equals(local) || "iconSize".equals(local) || "cornerRadius".equals(local))) return true;
+
+        boolean progress = simpleName.endsWith("MaterialProgressIndicator") || simpleName.endsWith("CircularProgressIndicator")
+                || simpleName.endsWith("LinearProgressIndicator") || simpleName.endsWith("LoadingIndicator");
+        if (progress && "style".equals(name)) return true;
+
+        boolean slider = simpleName.endsWith("Slider") || simpleName.endsWith("MaterialSlider");
+        if (slider && ("style".equals(name) || "valueFrom".equals(local) || "valueTo".equals(local)
+                || "stepSize".equals(local) || "value".equals(local) || "thumbRadius".equals(local)
+                || "trackHeight".equals(local) || "haloRadius".equals(local) || "labelBehavior".equals(local))) return true;
+
+        boolean nestedScroll = simpleName.endsWith("NestedScrollView");
+        if (nestedScroll && ("fillViewport".equals(local) || "nestedScrollingEnabled".equals(local)
+                || "clipToPadding".equals(local) || "overScrollMode".equals(local))) return true;
+
+        boolean collapsingToolbar = simpleName.endsWith("CollapsingToolbarLayout");
+        if (collapsingToolbar && ("title".equals(local) || "titleEnabled".equals(local)
+                || "titleCollapseMode".equals(local) || "scrimAnimationDuration".equals(local)
+                || "scrimVisibleHeightTrigger".equals(local) || "expandedTitleMarginStart".equals(local)
+                || "expandedTitleMarginEnd".equals(local) || "expandedTitleMarginTop".equals(local)
+                || "expandedTitleMarginBottom".equals(local) || "toolbarId".equals(local)
+                || "contentScrim".equals(local) || "statusBarScrim".equals(local))) return true;
+
+        if (("layout_collapseMode".equals(local) || "layout_collapseParallaxMultiplier".equals(local))
+                && isChildOfCollapsingToolbar()) return true;
+        if (simpleName.endsWith("CoordinatorLayout") && ("keylines".equals(local) || "statusBarBackground".equals(local))) return true;
+        return false;
+    }
+
+    private boolean isChildOfCollapsingToolbar() {
+        if (bean == null || bean.parent == null || sc_id == null || projectFileBean == null) return false;
+        try {
+            for (ViewBean candidate : jC.a(sc_id).d(projectFileBean.getXmlName())) {
+                if (bean.parent.equals(candidate.id)) {
+                    return candidate.convert != null && candidate.convert.endsWith("CollapsingToolbarLayout");
+                }
+            }
+        } catch (RuntimeException ignored) { }
+        return false;
+    }
+
+    private String canonicalizePropertyBackedAttribute(String name) {
+        if ("elevation".equals(name)) return "android:elevation";
+        if ("visibility".equals(name)) return "android:visibility";
+        return name;
+    }
+
     private void saveAttributes(Map<String, String> attributes) {
+        String viewKey = getActiveOverrideViewKey();
+        final LinkedHashMap<String, String> previousOverrides = explicitPropertyAttributeOverridesByView.getOrDefault(viewKey, new LinkedHashMap<>());
+
+        final LinkedHashMap<String, String> merged = new LinkedHashMap<>();
+        readAllAttributes().forEach((name, existingValue) -> {
+            if (isPropertyBackedAttribute(name)) {
+                String canonicalName = canonicalizePropertyBackedAttribute(name);
+                if (!previousOverrides.containsKey(canonicalName)) merged.put(canonicalName, existingValue);
+            }
+        });
+
+        LinkedHashMap<String, String> updatedOverrides = new LinkedHashMap<>();
+        attributes.forEach((name, attributeValue) -> {
+            String canonicalName = canonicalizePropertyBackedAttribute(name);
+            merged.put(canonicalName, attributeValue);
+            if (isPropertyBackedAttribute(name)) updatedOverrides.put(canonicalName, attributeValue);
+        });
+
+        if (updatedOverrides.isEmpty()) explicitPropertyAttributeOverridesByView.remove(viewKey);
+        else explicitPropertyAttributeOverridesByView.put(viewKey, updatedOverrides);
+
         String result =
-                attributes.entrySet().stream()
-                        .map(entry -> entry.getKey() + "=\"" + entry.getValue() + "\"")
+                merged.entrySet().stream()
+                        .map(entry -> entry.getKey() + "=\"" + pro.sketchware.utility.XmlUtil.escapeAttributeValue(entry.getValue()) + "\"")
                         .collect(Collectors.joining("\n"));
         setValue(result);
         if (valueChangeListener != null) valueChangeListener.a(key, value);
     }
 
     private LinkedHashMap<String, String> readAttributes() {
+        LinkedHashMap<String, String> attributes = readAllAttributes();
+        attributes.entrySet().removeIf(entry -> isPropertyBackedAttribute(entry.getKey())
+                && !isExplicitPropertyAttributeOverride(entry.getKey()));
+        return attributes;
+    }
+
+    private boolean isExplicitPropertyAttributeOverride(String name) {
+        LinkedHashMap<String, String> overrides = explicitPropertyAttributeOverridesByView.get(getActiveOverrideViewKey());
+        return overrides != null && overrides.containsKey(canonicalizePropertyBackedAttribute(name));
+    }
+
+    private LinkedHashMap<String, String> readAllAttributes() {
         LinkedHashMap<String, String> attributes = new LinkedHashMap<>();
 
         try {
@@ -1107,7 +1552,15 @@ public class PropertyInputItem extends RelativeLayout implements View.OnClickLis
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 if (eventType == XmlPullParser.START_TAG) {
                     for (int i = 0; i < parser.getAttributeCount(); i++) {
-                        attributes.put(parser.getAttributeName(i), parser.getAttributeValue(i));
+                        String localName = parser.getAttributeName(i);
+                        String prefix = parser.getAttributePrefix(i);
+                        String qualifiedName = prefix == null || prefix.isEmpty()
+                                ? localName : prefix + ":" + localName;
+                        // Preserve the namespace prefix. Property-backed attributes are stored
+                        // as app:icon, android:value, etc.; dropping the prefix creates duplicate
+                        // unqualified XML attributes and prevents property/custom precedence from
+                        // being deterministic.
+                        attributes.put(qualifiedName, parser.getAttributeValue(i));
                     }
                 }
                 eventType = parser.next();

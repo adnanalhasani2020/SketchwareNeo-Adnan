@@ -3,9 +3,11 @@ package com.besome.sketch.editor.view.palette;
 import static pro.sketchware.utility.SketchwareUtil.dpToPx;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -200,6 +202,7 @@ public class PaletteWidget extends LinearLayout {
             case "WaveSideBar" -> new IconWaveSideBar(context);
             case "SignInButton" -> new IconGoogleSignInButton(context);
             case "MaterialButton" -> new IconMaterialButton(context);
+            case "MaterialIconButton" -> new IconMaterialButton(context, true);
             case "CircleImageView" -> new IconCircleImageView(context);
             case "LottieAnimation" -> new IconLottieAnimation(context);
             case "YoutubePlayer" -> new IconYoutubePlayer(context);
@@ -214,11 +217,28 @@ public class PaletteWidget extends LinearLayout {
 
         iconBase.setText(title);
         iconBase.setName(name);
+        switch (title) {
+            case "MaterialTextView" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_text_view);
+            case "TextInputEditText" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_text_input_edit_text);
+            case "MaterialAutoCompleteTextView" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_autocomplete);
+            case "MaterialSwitch" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_switch);
+            case "MaterialCheckBox" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_checkbox);
+            case "MaterialRadioButton" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_radio);
+            case "Chip" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_chip);
+            case "MaterialProgressIndicator" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_progress);
+            case "Slider" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_slider);
+            case "ExtendedFloatingActionButton" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_extended_fab);
+            case "ShapeableImageView" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_shapeable_image);
+        }
         widgetsContainer.addView(iconBase);
         return iconBase;
     }
 
     public View extraWidgetLayout(String tag, String name) {
+        return extraWidgetLayout(tag, name, "");
+    }
+
+    public View extraWidgetLayout(String tag, String name, String initialCustomView) {
         IconBase iconBase;
         Context context = getContext();
         iconBase = switch (name) {
@@ -231,10 +251,37 @@ public class PaletteWidget extends LinearLayout {
             case "TextInputLayout" -> new IconTextInputLayout(context);
             case "RelativeLayout" -> new IconRelativeLayout(context);
             case "ConstraintLayout" -> new IconConstraintLayout(context);
+            case "CoordinatorLayout", "NestedScrollView" -> new IconBase(context);
+            case "include" -> {
+                IconBase include = new IconBase(context);
+                include.setWidgetImage(R.drawable.ic_mtrl_interface);
+                yield include;
+            }
             default -> new IconBase(context);
         };
         if (tag != null && !tag.isEmpty()) {
             iconBase.setTag(tag);
+        }
+        iconBase.setName(name);
+        iconBase.setText(name);
+        iconBase.setInitialCustomView(initialCustomView);
+        switch (name) {
+            case "CoordinatorLayout" -> iconBase.setWidgetImage(R.drawable.ic_palette_coordinator_layout);
+            case "NestedScrollView" -> iconBase.setWidgetImage(R.drawable.ic_palette_nested_scroll_view);
+            // Preserve the original CollapsingToolbarLayout icon used by Sketchware Neo.
+            case "CollapsingToolbarLayout" -> iconBase.setWidgetImage(R.drawable.ic_mtrl_collapsing_toolbar);
+            case "TextInputLayout" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_text_input_layout);
+            case "MaterialCardView" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_card);
+            case "MaterialButtonToggleGroup" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_toggle_group);
+            case "ChipGroup" -> iconBase.setWidgetImage(R.drawable.ic_palette_m3_chip_group);
+        }
+
+        if ("CoordinatorLayout".equals(name) || "NestedScrollView".equals(name)) {
+            ImageView paletteIcon = iconBase.findViewById(R.id.img_widget);
+            if (paletteIcon != null) {
+                paletteIcon.setImageTintList(ColorStateList.valueOf(
+                        MaterialColors.getColor(paletteIcon, R.attr.colorOnSurfaceVariant)));
+            }
         }
 
         layoutContainer.addView(iconBase);
