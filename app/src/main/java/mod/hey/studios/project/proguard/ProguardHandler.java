@@ -139,11 +139,40 @@ public class ProguardHandler {
 
     private String getDefaultConfig() {
         HashMap<String, String> defaultConfig = new HashMap<>();
-
         defaultConfig.put("enabled", "false");
         defaultConfig.put("debug", "false");
-
+        defaultConfig.put("r8", "false");
+        defaultConfig.put("r8FullMode", "false");
         return new Gson().toJson(defaultConfig);
+    }
+
+    private HashMap<String, String> readConfig() {
+        if (FileUtil.isExistFile(config_path)) {
+            try {
+                HashMap<String, String> config = new Gson().fromJson(
+                        FileUtil.readFile(config_path), Helper.TYPE_STRING_MAP);
+                if (config != null) {
+                    if (!config.containsKey("enabled")) config.put("enabled", "false");
+                    if (!config.containsKey("debug")) config.put("debug", "false");
+                    if (!config.containsKey("r8")) config.put("r8", "false");
+                    if (!config.containsKey("r8FullMode")) config.put("r8FullMode", "false");
+                    return config;
+                }
+            } catch (Exception ignored) {
+                // Shrinker settings are recoverable; malformed settings should not crash the
+                // editor or prevent a build from showing a clear configuration state.
+            }
+        }
+        HashMap<String, String> defaults = new HashMap<>();
+        defaults.put("enabled", "false");
+        defaults.put("debug", "false");
+        defaults.put("r8", "false");
+        defaults.put("r8FullMode", "false");
+        return defaults;
+    }
+
+    private void saveConfig(HashMap<String, String> config) {
+        FileUtil.writeFile(config_path, new Gson().toJson(config == null ? readConfig() : config));
     }
 
     public String getCustomProguardRules() {
@@ -165,10 +194,11 @@ public class ProguardHandler {
     }
 
     public void setKeepLineNumbersEnabled(boolean enabled) {
-        HashMap<String, String> config = new Gson().fromJson(FileUtil.readFile(config_path), Helper.TYPE_STRING_MAP);
+        // Use the same recovery path as the other shrinker switches. If an old or
+        // partially-written settings file is malformed, toggling this option must not crash.
+        HashMap<String, String> config = readConfig();
         config.put("keepLineNumbers", String.valueOf(enabled));
-
-        FileUtil.writeFile(config_path, new Gson().toJson(config));
+        saveConfig(config);
     }
 
     public static final Map<String, String> KEEP_RULE_TEMPLATES = createKeepRuleTemplates();
@@ -285,10 +315,9 @@ public class ProguardHandler {
     }
 
     public void setProguardEnabled(boolean proguardEnabled) {
-        HashMap<String, String> config = new Gson().fromJson(FileUtil.readFile(config_path), Helper.TYPE_STRING_MAP);
+        HashMap<String, String> config = readConfig();
         config.put("enabled", String.valueOf(proguardEnabled));
-
-        FileUtil.writeFile(config_path, new Gson().toJson(config));
+        saveConfig(config);
     }
 
     public boolean isR8Enabled() {
@@ -313,10 +342,25 @@ public class ProguardHandler {
     }
 
     public void setR8Enabled(boolean r8Enabled) {
-        var config = new Gson().fromJson(FileUtil.readFile(config_path), Helper.TYPE_STRING_MAP);
+        HashMap<String, String> config = readConfig();
         config.put("r8", String.valueOf(r8Enabled));
+        saveConfig(config);
+    }
 
-        FileUtil.writeFile(config_path, new Gson().toJson(config));
+    public boolean isR8FullModeEnabled() {
+        if (!FileUtil.isExistFile(config_path)) return false;
+        try {
+            HashMap<String, String> config = new Gson().fromJson(FileUtil.readFile(config_path), Helper.TYPE_STRING_MAP);
+            return config != null && "true".equals(config.get("r8FullMode"));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    public void setR8FullModeEnabled(boolean enabled) {
+        HashMap<String, String> config = readConfig();
+        config.put("r8FullMode", String.valueOf(enabled));
+        saveConfig(config);
     }
 
     public boolean libIsProguardFMEnabled(String library) {
@@ -340,10 +384,9 @@ public class ProguardHandler {
     }
 
     public void setDebugEnabled(boolean debugEnabled) {
-        HashMap<String, String> config = new Gson().fromJson(FileUtil.readFile(config_path), Helper.TYPE_STRING_MAP);
+        HashMap<String, String> config = readConfig();
         config.put("debug", String.valueOf(debugEnabled));
-
-        FileUtil.writeFile(config_path, new Gson().toJson(config));
+        saveConfig(config);
     }
 
     public void setProguardFMLibs(ArrayList<String> fullModeLibs) {
@@ -354,7 +397,17 @@ public class ProguardHandler {
         if (isShrinkingEnabled()) {
             if (isR8Enabled()) {
                 progressReceiver.onProgress("Running R8 on classes...", 15);
-                builder.runR8();
+                try {
+                    builder.runR8();
+                } catch (IOException r8Failure) {
+                    String details = (r8Failure.getMessage() == null ? "" : r8Failure.getMessage())
+                            .toLowerCase(java.util.Locale.ROOT);
+                    if (!details.contains("ran out of memory") && !details.contains("outofmemoryerror")) {
+                        throw r8Failure;
+                    }
+                    progressReceiver.onProgress("R8 ran out of memory; trying ProGuard fallback...", 16);
+                    builder.runProguardFallbackAfterR8OutOfMemory();
+                }
             } else {
                 progressReceiver.onProgress("ProGuarding classes...", 16);
                 builder.runProguard();

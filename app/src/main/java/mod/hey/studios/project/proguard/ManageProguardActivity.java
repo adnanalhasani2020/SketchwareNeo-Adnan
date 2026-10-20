@@ -2,6 +2,7 @@ package mod.hey.studios.project.proguard;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Toast;
 
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
@@ -59,10 +60,17 @@ public class ManageProguardActivity extends BaseAppCompatActivity {
         binding.r8Enabled.setChecked(pg.isR8Enabled());
         binding.swKeepLineNumbers.setChecked(pg.isKeepLineNumbersEnabled());
 
-        binding.swPgEnabled.setOnCheckedChangeListener((buttonView, isChecked) -> pg.setProguardEnabled(isChecked));
+        binding.swPgEnabled.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            pg.setProguardEnabled(isChecked);
+            updateDependentControls();
+        });
         binding.swPgDebug.setOnCheckedChangeListener((buttonView, isChecked) -> pg.setDebugEnabled(isChecked));
-        binding.r8Enabled.setOnCheckedChangeListener((buttonView, isChecked) -> pg.setR8Enabled(isChecked));
+        binding.r8Enabled.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            pg.setR8Enabled(isChecked);
+            updateDependentControls();
+        });
         binding.swKeepLineNumbers.setOnCheckedChangeListener((buttonView, isChecked) -> pg.setKeepLineNumbersEnabled(isChecked));
+        updateDependentControls();
     }
 
     private void initializeClickListeners() {
@@ -87,6 +95,37 @@ public class ManageProguardActivity extends BaseAppCompatActivity {
             intent.putExtra("sc_id", sc_id);
             startActivity(intent);
         });
+    }
+
+
+    private void updateDependentControls() {
+        boolean shrinkingEnabled = pg.isShrinkingEnabled();
+        boolean r8Enabled = shrinkingEnabled && pg.isR8Enabled();
+        setControlState(binding.rowPgDebug, binding.swPgDebug, shrinkingEnabled);
+        setControlState(binding.rowKeepLineNumbers, binding.swKeepLineNumbers, shrinkingEnabled);
+        setControlState(binding.rowR8Enabled, binding.r8Enabled, shrinkingEnabled);
+        setRowState(binding.lnPgFm, r8Enabled);
+        setRowState(binding.lnAnalyzeLibraries, shrinkingEnabled);
+    }
+
+    private void setControlState(View row, View control, boolean enabled) {
+        row.setEnabled(enabled);
+        row.setClickable(enabled);
+        row.setAlpha(enabled ? 1f : 0.45f);
+        control.setEnabled(enabled);
+        control.setAlpha(enabled ? 1f : 0.7f);
+        row.setImportantForAccessibility(enabled
+                ? View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                : View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    }
+
+    private void setRowState(View row, boolean enabled) {
+        row.setEnabled(enabled);
+        row.setClickable(enabled);
+        row.setAlpha(enabled ? 1f : 0.45f);
+        row.setImportantForAccessibility(enabled
+                ? View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                : View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
     private void showKeepRuleTemplateDialog() {

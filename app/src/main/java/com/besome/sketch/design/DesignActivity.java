@@ -1074,25 +1074,11 @@ private void checkAndInitGit() {
 
     void toCollectionManager() { launchActivity(ManageCollectionActivity.class, openCollectionManager); }
     
-    void toAndroidManifestManager() { 
+    void toAndroidManifestManager() {
         if (projectFile == null) return;
-        
-        boolean isCustomManifestEnabled = new ProjectSettings(sc_id).getValue(ProjectSettings.SETTING_ENABLE_CUSTOM_MANIFEST, "false").equals("true");
-        
-        if (isCustomManifestEnabled) {
-            String customManifestPath = FileUtil.getExternalStorageDir() + "/.sketchware/data/" + sc_id + "/custom_manifest.xml";
-            if (!FileUtil.isExistFile(customManifestPath)) {
-                String source = new yq(getApplicationContext(), sc_id).getFileSrc("AndroidManifest.xml", jC.b(sc_id), jC.a(sc_id), jC.c(sc_id));
-                FileUtil.writeFile(customManifestPath, source);
-            }
-            Intent intent = new Intent(this, SrcCodeEditor.class);
-            intent.putExtra("content", customManifestPath);
-            intent.putExtra("title", "Custom AndroidManifest.xml");
-            intent.putExtra("sc_id", sc_id);
-            startActivity(intent);
-        } else {
-            launchActivity(AndroidManifestInjection.class, null, new Pair<>("file_name", currentJavaFileName)); 
-        }
+        // Always open the manager first. The manager owns the custom-manifest toggle
+        // and exposes the editor button only while that feature is enabled.
+        launchActivity(AndroidManifestInjection.class, null, new Pair<>("file_name", currentJavaFileName));
     }
     
     void toAppCompatInjectionManager() { if (projectFile != null) launchActivity(ManageAppCompatActivity.class, null, new Pair<>("file_name", projectFile.getXmlName())); }
@@ -1213,9 +1199,12 @@ private void checkAndInitGit() {
             if (activity == null) return;
             mod.sketchlibx.project.history.TimeMachineManager.takeSnapshot(DesignActivity.sc_id);
             try {
-                var q = activity.q;
                 var sc_id = DesignActivity.sc_id;
                 CustomGradleBuildManager.prepareBuild(sc_id);
+                // Custom Gradle may update applicationId/version metadata. Recreate the
+                // generator after parsing so this build doesn't keep stale identity fields.
+                var q = new yq(activity.getApplicationContext(), sc_id);
+                activity.q = q;
                 onProgress("Deleting temporary files...", 1);
                 FileUtil.deleteFile(q.projectMyscPath);
                 q.c(activity.getApplicationContext());

@@ -11,6 +11,10 @@ import java.util.Set;
  */
 public class ParsedGradle {
 
+    public static final String FIELD_APPLICATION_ID = "applicationId";
+    public static final String FIELD_NAMESPACE = "namespace";
+    public static final String FIELD_VERSION_CODE = "versionCode";
+    public static final String FIELD_VERSION_NAME = "versionName";
     public static final String FIELD_MIN_SDK = "minSdk";
     public static final String FIELD_TARGET_SDK = "targetSdk";
     public static final String FIELD_COMPILE_SDK = "compileSdk";
@@ -19,8 +23,12 @@ public class ParsedGradle {
     public static final String FIELD_MULTIDEX = "multiDex";
     public static final String FIELD_MINIFY_ENABLED = "minifyEnabled";
     public static final String FIELD_R8_ENABLED = "r8Enabled";
+    public static final String FIELD_R8_FULL_MODE = "r8FullMode";
+    public static final String FIELD_APP_NAME = "appName";
 
     public boolean r8Enabled = true;
+    /** Mirrors the bundled Sketchware Gradle template unless gradle.properties overrides it. */
+    public boolean r8FullModeEnabled = false;
 
     public final Set<String> explicitFields = new HashSet<>();
 
@@ -29,6 +37,7 @@ public class ParsedGradle {
     public String namespace     = null;   // null → falls back to applicationId
     public int    versionCode   = 1;
     public String versionName   = "1.0";
+    public String appName = null;
     public int    minSdk        = 21;
     public int    targetSdk     = 34;
     public int    compileSdk    = 34;

@@ -19,6 +19,8 @@ import com.besome.sketch.editor.manage.library.LibraryItemView;
 import com.besome.sketch.lib.base.BaseAppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.materialswitch.MaterialSwitch;
+import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -51,32 +53,19 @@ public class AndroidManifestInjection extends BaseAppCompatActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        if (getIntent().hasExtra("sc_id") && getIntent().hasExtra("file_name")) {
-            sc_id = getIntent().getStringExtra("sc_id");
-            currentActivityName = getIntent().getStringExtra("file_name").replaceAll(".java", "");
-            
-            // Safety Check: If Custom Manifest is enabled, redirect immediately
-            ProjectSettings settings = new ProjectSettings(sc_id);
-            if (settings.getValue(ProjectSettings.SETTING_ENABLE_CUSTOM_MANIFEST, "false").equals("true")) {
-                String customManifestPath = FileUtil.getExternalStorageDir() + "/.sketchware/data/" + sc_id + "/custom_manifest.xml";
-                if (!FileUtil.isExistFile(customManifestPath)) {
-                    String source = new yq(getApplicationContext(), sc_id).getFileSrc("AndroidManifest.xml", jC.b(sc_id), jC.a(sc_id), jC.c(sc_id));
-                    FileUtil.writeFile(customManifestPath, source);
-                }
-                Intent intent = new Intent(this, SrcCodeEditor.class);
-                intent.putExtra("content", customManifestPath);
-                intent.putExtra("title", "Custom AndroidManifest.xml");
-                intent.putExtra("sc_id", sc_id);
-                startActivity(intent);
-                finish();
-                return;
-            }
+        sc_id = getIntent().getStringExtra("sc_id");
+        String fileName = getIntent().getStringExtra("file_name");
+        currentActivityName = fileName == null ? "" : fileName.replace(".java", "");
+        if (sc_id == null || sc_id.trim().isEmpty()) {
+            finish();
+            return;
         }
 
         binding = AndroidManifestInjectionBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
         setupCustomToolbar();
+        setupCustomManifestControls();
         checkAttrs();
         setupOptions();
         refreshList();
@@ -92,6 +81,42 @@ public class AndroidManifestInjection extends BaseAppCompatActivity {
             checkAttrs();
             refreshList();
         }
+    }
+
+    private void setupCustomManifestControls() {
+        MaterialSwitch customManifestSwitch = findViewById(R.id.switch_custom_manifest_manager);
+        MaterialButton openManifestButton = findViewById(R.id.btn_open_android_manifest);
+        ProjectSettings settings = new ProjectSettings(sc_id);
+        customManifestSwitch.setChecked(settings.getValue(ProjectSettings.SETTING_ENABLE_CUSTOM_MANIFEST, "false").equals("true"));
+        openManifestButton.setVisibility(customManifestSwitch.isChecked() ? View.VISIBLE : View.GONE);
+        customManifestSwitch.setOnCheckedChangeListener((button, checked) -> {
+            settings.setValue(ProjectSettings.SETTING_ENABLE_CUSTOM_MANIFEST, checked ? "true" : "false");
+            openManifestButton.setVisibility(checked ? View.VISIBLE : View.GONE);
+            if (checked) ensureCustomManifestFile();
+        });
+        openManifestButton.setOnClickListener(v -> openCustomManifest());
+    }
+
+    private String getCustomManifestPath() {
+        return FileUtil.getExternalStorageDir() + "/.sketchware/data/" + sc_id + "/custom_manifest.xml";
+    }
+
+    private void ensureCustomManifestFile() {
+        String path = getCustomManifestPath();
+        if (!FileUtil.isExistFile(path)) {
+            String source = new yq(getApplicationContext(), sc_id).getFileSrc(
+                    "AndroidManifest.xml", jC.b(sc_id), jC.a(sc_id), jC.c(sc_id));
+            FileUtil.writeFile(path, source == null ? "" : source);
+        }
+    }
+
+    private void openCustomManifest() {
+        ensureCustomManifestFile();
+        Intent intent = new Intent(this, SrcCodeEditor.class);
+        intent.putExtra("content", getCustomManifestPath());
+        intent.putExtra("title", "Custom AndroidManifest.xml");
+        intent.putExtra("sc_id", sc_id);
+        startActivity(intent);
     }
 
     private void checkAttrs() {

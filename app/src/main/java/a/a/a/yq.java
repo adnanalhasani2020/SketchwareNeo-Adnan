@@ -16,11 +16,14 @@ import com.besome.sketch.beans.ViewBean;
 import com.besome.sketch.editor.manage.library.material3.Material3LibraryManager;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.regex.Pattern;
 
 import mod.hey.studios.build.BuildSettings;
@@ -154,37 +157,8 @@ public class yq {
     }
 
     private String processAndroidX(String code) {
-        boolean isForceAndroidXEnabled = projectSettings.getValue(ProjectSettings.SETTING_FORCE_ANDROIDX, "false").equals("true");
-        if (!isForceAndroidXEnabled || code == null) return code;
-        
-        code = code.replace("android.support.v7.app.AppCompatActivity", "androidx.appcompat.app.AppCompatActivity");
-        code = code.replace("android.support.v4.app.Fragment", "androidx.fragment.app.Fragment");
-        code = code.replace("android.support.v4.app.FragmentManager", "androidx.fragment.app.FragmentManager");
-        code = code.replace("android.support.v4.content.ContextCompat", "androidx.core.content.ContextCompat");
-        code = code.replace("android.support.v4.app.ActivityCompat", "androidx.core.app.ActivityCompat");
-        code = code.replace("android.support.v7.app.AlertDialog", "androidx.appcompat.app.AlertDialog");
-        code = code.replace("android.support.v7.widget.Toolbar", "androidx.appcompat.widget.Toolbar");
-        code = code.replace("android.support.v7.widget.RecyclerView", "androidx.recyclerview.widget.RecyclerView");
-        code = code.replace("android.support.v7.widget.CardView", "androidx.cardview.widget.CardView");
-        code = code.replace("android.support.v4.view.ViewPager", "androidx.viewpager.widget.ViewPager");
-        code = code.replace("android.support.v4.view.PagerAdapter", "androidx.viewpager.widget.PagerAdapter");
-        code = code.replace("android.support.v4.widget.DrawerLayout", "androidx.drawerlayout.widget.DrawerLayout");
-        code = code.replace("android.support.v4.widget.SwipeRefreshLayout", "androidx.swiperefreshlayout.widget.SwipeRefreshLayout");
-        code = code.replace("android.support.design.widget.FloatingActionButton", "com.google.android.material.floatingactionbutton.FloatingActionButton");
-        code = code.replace("android.support.design.widget.AppBarLayout", "com.google.android.material.appbar.AppBarLayout");
-        code = code.replace("android.support.design.widget.CoordinatorLayout", "androidx.coordinatorlayout.widget.CoordinatorLayout");
-        code = code.replace("android.support.design.widget.Snackbar", "com.google.android.material.snackbar.Snackbar");
-        code = code.replace("android.support.design.widget.BottomSheetDialog", "com.google.android.material.bottomsheet.BottomSheetDialog");
-        code = code.replace("android.support.design.widget.NavigationView", "com.google.android.material.navigation.NavigationView");
-        code = code.replace("android.support.design.widget.TabLayout", "com.google.android.material.tabs.TabLayout");
-        code = code.replace("android.support.design.widget.TextInputLayout", "com.google.android.material.textfield.TextInputLayout");
-        code = code.replace("android.support.design.widget.TextInputEditText", "com.google.android.material.textfield.TextInputEditText");
-        code = code.replace("android.support.v4.content.FileProvider", "androidx.core.content.FileProvider");
-        code = code.replace("android.support.annotation.", "androidx.annotation.");
-        code = code.replace("android.support.v4.graphics.drawable.RoundedBitmapDrawable", "androidx.core.graphics.drawable.RoundedBitmapDrawable");
-        code = code.replace("android.support.v4.graphics.drawable.RoundedBitmapDrawableFactory", "androidx.core.graphics.drawable.RoundedBitmapDrawableFactory");
-        code = code.replace("android.support.v4.util.Pair", "androidx.core.util.Pair");
-        
+        // The legacy Force AndroidX option was removed because it silently rewrote
+        // project source without updating dependency declarations. Preserve source as authored.
         return code;
     }
 
@@ -256,13 +230,50 @@ public class yq {
         fileUtil.b(projectMyscPath + File.separator + "build.gradle", projGradleContent);
         fileUtil.b(projectMyscPath + File.separator + "settings.gradle", settingsGradleContent);
 
-        fileUtil.b(projectMyscPath + File.separator + "gradle.properties", "android.enableR8.fullMode=false\nandroid.enableJetifier=true\nandroid.useAndroidX=true");
+        String defaultGradleProperties = "android.enableR8.fullMode=false\nandroid.enableJetifier=true\nandroid.useAndroidX=true\n";
+        String gradlePropertiesContent = defaultGradleProperties;
+        if (isCustomGradleEnabled) {
+            String customPropertiesPath = customGradleDir + "gradle.properties";
+            if (!FileUtil.isExistFile(customPropertiesPath)
+                    || FileUtil.readFile(customPropertiesPath).trim().isEmpty()
+                    || FileUtil.readFile(customPropertiesPath).contains("// Run the project once")) {
+                FileUtil.writeFile(customPropertiesPath, defaultGradleProperties);
+            }
+            gradlePropertiesContent = FileUtil.readFile(customPropertiesPath);
+        }
+        fileUtil.b(projectMyscPath + File.separator + "gradle.properties",
+                mergeGradlePropertiesWithDefaults(gradlePropertiesContent, defaultGradleProperties));
 
         generateCppBuildFiles(isCustomGradleEnabled);
 
         if (isAndroidStudioExport) {
             CppExporter.processForAndroidStudioExport(this, sc_id);
         }
+    }
+
+    private String mergeGradlePropertiesWithDefaults(String configured, String defaults) {
+        String source = configured == null ? "" : configured;
+        Properties properties = new Properties();
+        try {
+            properties.load(new StringReader(source));
+        } catch (IOException | IllegalArgumentException ignored) {
+            // Preserve the user's content even when Properties cannot parse it fully;
+            // Gradle will report malformed property syntax during sync/build.
+        }
+
+        StringBuilder result = new StringBuilder(source);
+        for (String line : defaults.split("\\n")) {
+            int separator = line.indexOf('=');
+            if (separator <= 0) continue;
+            String key = line.substring(0, separator).trim();
+            if (!properties.containsKey(key)) {
+                if (result.length() > 0 && result.charAt(result.length() - 1) != '\n') result.append('\n');
+                result.append(line).append('\n');
+            }
+        }
+        if (result.length() == 0) return "";
+        if (result.charAt(result.length() - 1) != '\n') result.append('\n');
+        return result.toString();
     }
 
     public void a(Context context, String str) {

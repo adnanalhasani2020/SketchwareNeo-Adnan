@@ -334,9 +334,9 @@ public class ViewProperty extends LinearLayout implements Kw {
         if (ConfigActivity.isSettingEnabled(ConfigActivity.SETTING_TREE_VIEW)) {
             if (context instanceof FragmentActivity) {
 
-                ViewTreeDrawerDialog drawer = new ViewTreeDrawerDialog(
+                ViewTreeDrawer drawer = new ViewTreeDrawer(
                     projectActivityViews,
-                    new ViewTreeDrawerDialog.OnViewSelectedListener() {
+                    new ViewTreeDrawer.OnViewSelectedListener() {
                         @Override
                         public void onSelected(String viewId) {
                             a(viewId);
@@ -351,10 +351,7 @@ public class ViewProperty extends LinearLayout implements Kw {
                     currentlySelectedViewId
                 );
 
-                drawer.show(
-                    ((FragmentActivity) context).getSupportFragmentManager(),
-                    "ViewTreeDrawer"
-                );
+                drawer.show((FragmentActivity) context);
             }
         } else {
             spnWidget.performClick();

@@ -56,48 +56,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <LinearLayout
-                        android:id="@+id/row_force_androidx"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="?attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="20dp"
-                        android:paddingVertical="14dp">
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Force AndroidX Usage"
-                                android:textAppearance="?attr/textAppearanceBodyLarge"
-                                android:textColor="?attr/colorOnSurface" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="Migrates the project to use AndroidX libraries"
-                                android:textAppearance="?attr/textAppearanceBodyMedium"
-                                android:textColor="?attr/colorOnSurfaceVariant" />
-                        </LinearLayout>
-
-                        <com.google.android.material.materialswitch.MaterialSwitch
-                            android:id="@+id/switch_force_androidx"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="16dp"
-                            android:minWidth="0dp"
-                            android:minHeight="0dp" />
-                    </LinearLayout>
+                    
 
                     <com.google.android.material.divider.MaterialDivider
                         android:layout_width="match_parent"
@@ -154,48 +113,7 @@
                         android:layout_marginStart="20dp"
                         app:dividerColor="?attr/colorOutlineVariant" />
 
-                    <LinearLayout
-                        android:id="@+id/row_custom_manifest"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="?attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="20dp"
-                        android:paddingVertical="14dp">
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Custom Manifest"
-                                android:textAppearance="?attr/textAppearanceBodyLarge"
-                                android:textColor="?attr/colorOnSurface" />
-
-                            <com.google.android.material.textview.MaterialTextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="Enable custom AndroidManifest.xml overrides"
-                                android:textAppearance="?attr/textAppearanceBodyMedium"
-                                android:textColor="?attr/colorOnSurfaceVariant" />
-                        </LinearLayout>
-
-                        <com.google.android.material.materialswitch.MaterialSwitch
-                            android:id="@+id/switch_custom_manifest"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="16dp"
-                            android:minWidth="0dp"
-                            android:minHeight="0dp" />
-                    </LinearLayout>
+                    
 
                     <com.google.android.material.divider.MaterialDivider
                         android:layout_width="match_parent"
@@ -264,13 +182,7 @@
                 android:layout_height="56dp"
                 android:text="Resource Usage Tracker" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_project_inspector"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="8dp"
-                android:text="Project Inspector" />
+            
 
             <LinearLayout
                 android:layout_width="match_parent"

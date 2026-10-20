@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import a.a.a.lC;
 import mod.hey.studios.build.BuildSettings;
 import mod.hey.studios.project.ProjectSettings;
 import mod.hey.studios.project.proguard.ProguardHandler;
@@ -50,6 +51,8 @@ public class GradleParser {
             "compileSdk(?:Version)?\\s*=?\\s*(\\d+)");
     private static final Pattern P_NAMESPACE = Pattern.compile(
             "namespace\\s*=?\\s*[\"']([^\"']+)[\"']");
+    private static final Pattern P_APP_NAME_RES_VALUE = Pattern.compile(
+            "resValue\\s*\\(?\\s*[\"']string[\"']\\s*,\\s*[\"']app_name[\"']\\s*,\\s*[\"']([^\"']+)[\"']");
     private static final Pattern P_JAVA_VERSION = Pattern.compile(
             "sourceCompatibility\\s*=?\\s*(?:JavaVersion\\.VERSION_)?[\"']?([0-9._]+)[\"']?");
     private static final Pattern P_PROGUARD_FILE = Pattern.compile(
@@ -110,9 +113,29 @@ public class GradleParser {
         result.targetSdk     = extractInt(content,    P_TARGET_SDK, result.targetSdk);
         result.compileSdk    = extractInt(content,    P_COMPILE_SDK, result.compileSdk);
         result.namespace     = extractStringOrNull(content, P_NAMESPACE);
+        result.appName       = extractStringOrNull(content, P_APP_NAME_RES_VALUE);
         result.javaVersion   = normalizeJavaVersion(extractString(content, P_JAVA_VERSION, result.javaVersion));
 
-        if (isPresent(content, P_MIN_SDK))        result.explicitFields.add(ParsedGradle.FIELD_MIN_SDK);
+        if (isValidPackageName(result.applicationId) && isPresent(content, P_APP_ID)) {
+            result.explicitFields.add(ParsedGradle.FIELD_APPLICATION_ID);
+        } else if (isPresent(content, P_APP_ID)) {
+            Log.w(TAG, "applicationId is not a static Java-style package name; preserving the existing Sketchware package.");
+        }
+        if (isValidPackageName(result.namespace) && isPresent(content, P_NAMESPACE)) {
+            result.explicitFields.add(ParsedGradle.FIELD_NAMESPACE);
+        } else if (isPresent(content, P_NAMESPACE)) {
+            Log.w(TAG, "namespace is not a static Java-style package name; preserving the existing Sketchware package.");
+        }
+        if (isPresent(content, P_VER_CODE)) result.explicitFields.add(ParsedGradle.FIELD_VERSION_CODE);
+        if (isStaticString(result.appName) && isPresent(content, P_APP_NAME_RES_VALUE)) {
+            result.explicitFields.add(ParsedGradle.FIELD_APP_NAME);
+        }
+        if (isStaticString(result.versionName) && isPresent(content, P_VER_NAME)) {
+            result.explicitFields.add(ParsedGradle.FIELD_VERSION_NAME);
+        } else if (isPresent(content, P_VER_NAME)) {
+            Log.w(TAG, "versionName is not static; preserving the existing Sketchware version name.");
+        }
+        if (isPresent(content, P_MIN_SDK))         result.explicitFields.add(ParsedGradle.FIELD_MIN_SDK);
         if (isPresent(content, P_TARGET_SDK))     result.explicitFields.add(ParsedGradle.FIELD_TARGET_SDK);
         if (isPresent(content, P_COMPILE_SDK))    result.explicitFields.add(ParsedGradle.FIELD_COMPILE_SDK);
         if (isPresent(content, P_JAVA_VERSION))   result.explicitFields.add(ParsedGradle.FIELD_JAVA_VERSION);
@@ -271,6 +294,15 @@ public class GradleParser {
         return result;
     }
 
+    private static boolean isValidPackageName(String value) {
+        return value != null && value.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+");
+    }
+
+    private static boolean isStaticString(String value) {
+        return value != null && !value.trim().isEmpty() && !value.contains("$")
+                && !value.contains("${") && !value.contains("\\$");
+    }
+
     private static String normalizeJavaVersion(String raw) {
         if (raw == null) return null;
         String value = raw.replace('_', '.');
@@ -284,6 +316,37 @@ public class GradleParser {
 
     public void applyToProjectBuildSettings(ParsedGradle parsed, String sc_id) {
         ProjectSettings projectSettings = new ProjectSettings(sc_id);
+
+        // Sketchware's in-app compiler uses project metadata for the source package,
+        // manifest package and version values. Keep those in sync with explicit custom
+        // Gradle values instead of only editing the Gradle text while compiling stale
+        // project metadata. The app label remains controlled by my_app_name/strings.xml;
+        // applicationId is not an Android app-label setting.
+        boolean updateIdentity = parsed.explicitFields.contains(ParsedGradle.FIELD_APPLICATION_ID)
+                || parsed.explicitFields.contains(ParsedGradle.FIELD_NAMESPACE)
+                || parsed.explicitFields.contains(ParsedGradle.FIELD_VERSION_CODE)
+                || parsed.explicitFields.contains(ParsedGradle.FIELD_VERSION_NAME)
+                || parsed.explicitFields.contains(ParsedGradle.FIELD_APP_NAME);
+        if (updateIdentity) {
+            java.util.HashMap<String, Object> metadata = lC.b(sc_id);
+            if (metadata != null) {
+                if (parsed.explicitFields.contains(ParsedGradle.FIELD_APPLICATION_ID)) {
+                    metadata.put("my_sc_pkg_name", parsed.applicationId);
+                } else if (parsed.explicitFields.contains(ParsedGradle.FIELD_NAMESPACE)) {
+                    metadata.put("my_sc_pkg_name", parsed.namespace);
+                }
+                if (parsed.explicitFields.contains(ParsedGradle.FIELD_VERSION_CODE)) {
+                    metadata.put("sc_ver_code", String.valueOf(parsed.versionCode));
+                }
+                if (parsed.explicitFields.contains(ParsedGradle.FIELD_VERSION_NAME)) {
+                    metadata.put("sc_ver_name", parsed.versionName);
+                }
+                if (parsed.explicitFields.contains(ParsedGradle.FIELD_APP_NAME)) {
+                    metadata.put("my_app_name", parsed.appName);
+                }
+                lC.b(sc_id, metadata);
+            }
+        }
 
         if (parsed.explicitFields.contains(ParsedGradle.FIELD_MIN_SDK)) {
             projectSettings.setValue(ProjectSettings.SETTING_MINIMUM_SDK_VERSION, String.valueOf(parsed.minSdk));
@@ -318,23 +381,37 @@ public class GradleParser {
         if (parsed.explicitFields.contains(ParsedGradle.FIELD_R8_ENABLED)) {
             new ProguardHandler(sc_id).setR8Enabled(parsed.r8Enabled);
         }
+        if (parsed.explicitFields.contains(ParsedGradle.FIELD_R8_FULL_MODE)) {
+            new ProguardHandler(sc_id).setR8FullModeEnabled(parsed.r8FullModeEnabled);
+        }
     }
 
     public void parsePropertiesInto(File propertiesFile, ParsedGradle result) {
-        if (propertiesFile == null || !propertiesFile.exists()) return;
+        if (result == null) return;
 
         Properties props = new Properties();
-        try (FileInputStream in = new FileInputStream(propertiesFile)) {
-            props.load(in);
-        } catch (IOException e) {
-            Log.w(TAG, "Failed to read " + propertiesFile.getName(), e);
-            return;
+        if (propertiesFile != null && propertiesFile.isFile()) {
+            try (FileInputStream in = new FileInputStream(propertiesFile)) {
+                props.load(in);
+            } catch (IOException e) {
+                Log.w(TAG, "Failed to read " + propertiesFile.getName(), e);
+                return;
+            }
         }
 
         String enableR8 = props.getProperty("android.enableR8");
         if (enableR8 != null) {
             result.r8Enabled = Boolean.parseBoolean(enableR8.trim());
             result.explicitFields.add(ParsedGradle.FIELD_R8_ENABLED);
+        }
+
+        // Apply only an explicitly configured full-mode value. The in-app compiler's
+        // fallback is compatibility mode; CustomGradleBuildManager seeds that default
+        // before this parser runs so removing the key does not leave a stale saved value.
+        String fullMode = props.getProperty("android.enableR8.fullMode");
+        if (fullMode != null) {
+            result.r8FullModeEnabled = Boolean.parseBoolean(fullMode.trim());
+            result.explicitFields.add(ParsedGradle.FIELD_R8_FULL_MODE);
         }
     }
 

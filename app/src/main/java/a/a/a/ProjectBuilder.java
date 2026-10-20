@@ -100,7 +100,9 @@ public class ProjectBuilder {
     private BuildProgressReceiver progressReceiver;
     private boolean buildAppBundle = false;
     private ArrayList<File> dexesToAddButNotMerge = new ArrayList<>();
-    private boolean isMultiDexEnabled = false; 
+    private boolean isMultiDexEnabled = false;
+    // Per-build fallback only: leave the user's R8 preference untouched for the next build.
+    private boolean useProguardFallbackForCurrentBuild = false; 
 
     private long timestampResourceCompilationStarted;
 
@@ -268,7 +270,7 @@ public class ProjectBuilder {
         } else {
             dexOutputDir.mkdirs();
         }
-        if (proguard.isShrinkingEnabled() && proguard.isR8Enabled()) return;
+        if (isR8ActiveForCurrentBuild()) return;
 
         if (isD8Enabled()) {
             long savedTimeMillis = System.currentTimeMillis();
@@ -700,7 +702,7 @@ public class ProjectBuilder {
         long savedTimeMillis = System.currentTimeMillis();
         ArrayList<File> dexes = new ArrayList<>();
         
-        boolean isR8Running = proguard.isShrinkingEnabled() && proguard.isR8Enabled();
+        boolean isR8Running = isR8ActiveForCurrentBuild();
 
         if (!isR8Running) {
             if (settings.getMinSdkVersion() < 21) {
@@ -894,6 +896,39 @@ public class ProjectBuilder {
         return false;
     }
 
+    private boolean isR8ActiveForCurrentBuild() {
+        return !useProguardFallbackForCurrentBuild
+                && proguard.isShrinkingEnabled()
+                && proguard.isR8Enabled();
+    }
+
+    /**
+     * Fall back to the existing ProGuard path only when R8 explicitly reports OOM.
+     * This preserves the user's R8 preference, removes any partial R8 dex output, and
+     * lets the normal D8/Dx stage consume ProGuard's output jar for this build only.
+     */
+    public void runProguardFallbackAfterR8OutOfMemory() throws IOException {
+        useProguardFallbackForCurrentBuild = true;
+        File dexOutputDir = new File(yq.binDirectoryPath, "dex");
+        if (dexOutputDir.exists()) {
+            File[] dexFiles = dexOutputDir.listFiles((dir, name) -> name.matches("classes(?:[0-9]+)?\\.dex"));
+            if (dexFiles != null) {
+                for (File dexFile : dexFiles) {
+                    if (!dexFile.delete() && dexFile.exists()) {
+                        throw new IOException("Could not remove partial R8 output before fallback: " + dexFile.getName());
+                    }
+                }
+            }
+        } else if (!dexOutputDir.mkdirs() && !dexOutputDir.isDirectory()) {
+            throw new IOException("Could not create DEX output directory for ProGuard fallback.");
+        }
+        File staleProguardOutput = new File(yq.proguardClassesPath);
+        if (staleProguardOutput.exists() && !staleProguardOutput.delete() && staleProguardOutput.exists()) {
+            throw new IOException("Could not remove stale ProGuard output before fallback.");
+        }
+        runProguard();
+    }
+
     public void runR8() throws IOException {
         long savedTimeMillis = System.currentTimeMillis();
 
@@ -989,49 +1024,82 @@ public class ProjectBuilder {
 
         final String[] error = new String[1];
         final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
-        
+        final String requestId = java.util.UUID.randomUUID().toString();
+
         android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
+                if (intent == null || !requestId.equals(intent.getStringExtra("request_id"))) {
+                    return; // Ignore completions from another concurrent/retried build.
+                }
                 if (intent.hasExtra("error")) {
                     error[0] = intent.getStringExtra("error");
                 }
                 latch.countDown();
             }
         };
-        
-        int flags = 0;
-        if (Build.VERSION.SDK_INT >= 33) {
-            flags = 4;
-        }
-        
-        if (Build.VERSION.SDK_INT >= 33) {
-             context.registerReceiver(receiver, new android.content.IntentFilter("com.sketchware.R8_COMPLETE"), flags);
-        } else {
-             context.registerReceiver(receiver, new android.content.IntentFilter("com.sketchware.R8_COMPLETE"));
-        }
-        
-        Intent intent = new Intent();
-        intent.setClassName(context, "mod.pranav.build.R8Service");
-        intent.putExtra("sc_id", yq.sc_id);
-        intent.putExtra("args_path", argsFile.getAbsolutePath());
-        context.startService(intent);
-        
+
+        boolean receiverRegistered = false;
         try {
-            boolean isFinished = false;
-            while (!isFinished) {
-                isFinished = latch.await(2, java.util.concurrent.TimeUnit.SECONDS);
-                if (!isFinished && !isR8ServiceRunning(context)) {
-                    error[0] = "R8 Service crashed silently in the background!\n(Likely killed by Android OS due to High RAM usage or OOM).";
+            int flags = 0;
+            if (Build.VERSION.SDK_INT >= 33) {
+                flags = 4; // Context.RECEIVER_NOT_EXPORTED
+            }
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(receiver, new android.content.IntentFilter("com.sketchware.R8_COMPLETE"), flags);
+            } else {
+                context.registerReceiver(receiver, new android.content.IntentFilter("com.sketchware.R8_COMPLETE"));
+            }
+            receiverRegistered = true;
+
+            Intent intent = new Intent();
+            intent.setClassName(context, "mod.pranav.build.R8Service");
+            intent.putExtra("sc_id", yq.sc_id);
+            intent.putExtra("args_path", argsFile.getAbsolutePath());
+            intent.putExtra("request_id", requestId);
+            context.startService(intent);
+
+            long serviceStartTime = android.os.SystemClock.elapsedRealtime();
+            final long startupGraceMs = 12000L;
+            final long compileTimeoutMs = 10L * 60L * 1000L;
+            while (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                long elapsed = android.os.SystemClock.elapsedRealtime() - serviceStartTime;
+                // Services can take a short time to become visible after startService(); don't
+                // mistake that launch race for an OOM/crash.
+                if (elapsed >= startupGraceMs && !isR8ServiceRunning(context)) {
+                    error[0] = "R8 compiler service stopped without sending a completion result. " +
+                            "The system may have terminated the isolated compiler process. Check device memory and logcat for R8Service.";
+                    break;
+                }
+                // Do not wait forever if a compiler gets stuck. This is deliberately generous
+                // for large projects, and the isolated service is stopped before returning.
+                if (elapsed >= compileTimeoutMs) {
+                    error[0] = "R8 did not finish within 10 minutes. The compiler service was asked to stop to avoid an indefinite build hang. " +
+                            "Try disabling R8 or reducing enabled libraries if the project is unusually large.";
+                    Intent stopIntent = new Intent();
+                    stopIntent.setClassName(context, "mod.pranav.build.R8Service");
+                    context.stopService(stopIntent);
                     break;
                 }
             }
         } catch (InterruptedException e) {
-            throw new IOException("R8 Interrupted");
+            Thread.currentThread().interrupt();
+            throw new IOException("R8 compilation was interrupted.", e);
+        } catch (RuntimeException e) {
+            throw new IOException("Unable to start the isolated R8 compiler service: " + e.getMessage(), e);
         } finally {
-            context.unregisterReceiver(receiver);
+            if (receiverRegistered) {
+                try {
+                    context.unregisterReceiver(receiver);
+                } catch (IllegalArgumentException ignored) {
+                    // The receiver may already have been detached by the framework.
+                }
+            }
+            if (argsFile.exists() && !argsFile.delete()) {
+                LogUtil.d(TAG, "Could not remove temporary R8 arguments file: " + argsFile.getAbsolutePath());
+            }
         }
-        
+
         if (error[0] != null) {
             broadcastBuildOutput(error[0]); 
             throw new IOException("R8 Compilation Failed:\n" + error[0]);

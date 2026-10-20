@@ -1,6 +1,7 @@
 package mod.pranav.build
 
 import mod.hey.studios.build.BuildSettings
+import mod.hey.studios.project.proguard.ProguardHandler
 import a.a.a.yq
 import android.util.Log
 import com.android.tools.r8.CompilationMode
@@ -58,7 +59,13 @@ class R8Compiler(
         }
 
         val programSizeMb = programByteSize / (1024 * 1024)
-        val sizeAdjustedCap = if (programSizeMb > 40) minOf(heapCap, 2) else heapCap
+        // R8's graph/IR memory grows non-linearly; throttle early instead of waiting
+        // for Android to kill the isolated compiler process on medium-size projects.
+        val sizeAdjustedCap = when {
+            programSizeMb > 20 -> 1
+            programSizeMb > 8 -> minOf(heapCap, 2)
+            else -> heapCap
+        }
 
         val userCap = BuildSettings(yq.sc_id).parallelThreads
         return minOf(sizeAdjustedCap, cpuCount, userCap).coerceAtLeast(1)
@@ -67,6 +74,22 @@ class R8Compiler(
     fun compile() {
         val output = Paths.get(yq.binDirectoryPath, "dex")
         Files.createDirectories(output)
+        // R8 requires a clean output directory. Remove stale dex files from previous
+        // failed/cancelled builds so they cannot be mixed into the new APK.
+        output.toFile().listFiles()?.forEach { file ->
+            if (file.isFile && file.name.matches(Regex("classes(?:[0-9]+)?\\.dex"))) {
+                if (!file.delete()) throw java.io.IOException("Unable to remove stale R8 output: ${file.name}")
+            }
+        }
+        inputs.forEach { path ->
+            val input = File(path)
+            if (!input.isFile || input.length() == 0L) {
+                throw java.io.IOException("R8 program input is missing or empty: $path")
+            }
+        }
+        libs.forEach { path ->
+            if (!File(path).isFile) throw java.io.IOException("R8 library input is missing: $path")
+        }
 
         val errorLog = StringBuilder()
         val diagnosticsHandler = object : DiagnosticsHandler {
@@ -85,6 +108,9 @@ class R8Compiler(
             .addProguardConfigurationFiles(configs.map { Paths.get(it) })
             .setProguardMapOutputPath(Paths.get(yq.proguardMappingPath))
             .setMinApiLevel(minApi)
+            // R8's Java API defaults to full mode. Mirror the actual gradle.properties
+            // value which CustomGradleBuildManager imported into the project's settings.
+            .setProguardCompatibility(!ProguardHandler(yq.sc_id).isR8FullModeEnabled())
             .addLibraryFiles(libs.map { Paths.get(it) })
             .setOutput(output, OutputMode.DexIndexed)
             .setMode(CompilationMode.RELEASE)
@@ -114,15 +140,25 @@ class R8Compiler(
         val executor = Executors.newFixedThreadPool(threadCount)
         try {
             R8.run(builder.build(), executor)
-        } catch (e: Exception) {
-            // Throw the exact captured error back to the Service
             if (errorLog.isNotEmpty()) {
+                throw IllegalStateException("R8 reported compilation errors:\n$errorLog")
+            }
+            val dexOutputs = output.toFile().listFiles { file ->
+                file.isFile && file.name.matches(Regex("classes(?:[0-9]+)?\\.dex")) && file.length() > 0L
+            }.orEmpty()
+            if (dexOutputs.isEmpty()) {
+                throw java.io.IOException("R8 completed without producing a non-empty classes.dex output.")
+            }
+        } catch (e: Exception) {
+            // Return precise diagnostics to the isolated Service instead of treating a
+            // diagnostics-only failure as a successful shrink and packaging stale output.
+            if (errorLog.isNotEmpty() && e.message?.contains(errorLog.toString()) != true) {
                 throw RuntimeException("R8 Error:\n$errorLog", e)
             } else {
                 throw e
             }
         } finally {
-            executor.shutdown()
+            executor.shutdownNow()
             val duration = System.currentTimeMillis() - startTime
             val freeHeapMbAfter =
                 (runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())) / (1024 * 1024)

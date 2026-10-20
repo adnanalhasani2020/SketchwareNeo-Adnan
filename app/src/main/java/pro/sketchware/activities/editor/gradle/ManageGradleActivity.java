@@ -27,6 +27,7 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.graphics.Insets;
+import androidx.core.widget.NestedScrollView;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.lifecycle.ViewModelProvider;
@@ -83,7 +84,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
     private static final String STATE_TAB = "tab";
     private static final String STATE_FILE = "file";
     private static final String STATE_BUFFERS = "buffers";
-    private static final int MENU_REFRESH = 100;
     private static final int MENU_CUSTOM = 101;
     private static final int MENU_LOG = 102;
     private static final int MENU_RESET = 103;
@@ -110,7 +110,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
     private String javaChoice;
     private boolean lastDirty;
     private boolean imeVisible;
-    private boolean updatingSkipSwitches;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -151,6 +150,7 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
 
         setupToolbar();
         setupTabs(tab);
+        setupScrollAppearance();
         setupEditor();
         setupFileChips();
         setupDependencies();
@@ -211,8 +211,33 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
         binding.toolbar.setNavigationOnClickListener(v -> getOnBackPressedDispatcher().onBackPressed());
     }
 
+    private void setupScrollAppearance() {
+        View appBar = (View) binding.toolbar.getParent();
+        View root = binding.getRoot();
+        NestedScrollView dependencies = findViewById(R.id.tab_deps);
+        NestedScrollView buildSettings = findViewById(R.id.scroll_build_settings);
+        NestedScrollView.OnScrollChangeListener listener = (view, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+            boolean scrolled = scrollY > 2;
+            int color = ThemeUtils.getColor(this,
+                    scrolled ? R.attr.colorSurfaceContainer : R.attr.colorSurface);
+            appBar.setBackgroundColor(color);
+            // The root paints the status-bar inset in edge-to-edge mode. Set the explicit
+            // status-bar color too for older/non-edge-to-edge window configurations.
+            root.setBackgroundColor(color);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                getWindow().setStatusBarColor(color);
+            }
+            androidx.core.view.WindowInsetsControllerCompat insetsController =
+                    androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+            insetsController.setAppearanceLightStatusBars(
+                    androidx.core.graphics.ColorUtils.calculateLuminance(color) > 0.5d);
+        };
+        if (dependencies != null) dependencies.setOnScrollChangeListener(listener);
+        if (buildSettings != null) buildSettings.setOnScrollChangeListener(listener);
+    }
+
     private void setupTabs(int selected) {
-        binding.tabs.addTab(binding.tabs.newTab().setText("Gradle Sync").setIcon(R.drawable.ic_mtrl_gradle));
+        binding.tabs.addTab(binding.tabs.newTab().setText("Gradle Files").setIcon(R.drawable.ic_mtrl_gradle));
         binding.tabs.addTab(binding.tabs.newTab().setText("Dependencies").setIcon(R.drawable.ic_mtrl_dependency));
         binding.tabs.addTab(binding.tabs.newTab().setText("Build Settings").setIcon(R.drawable.ic_mtrl_configuration));
         binding.tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
@@ -518,16 +543,9 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
         binding.depsList.setItemAnimator(null);
         binding.btnAddDep.setOnClickListener(v -> showDependencyDialog(null));
         binding.btnSyncNow.setOnClickListener(v -> onSyncClicked());
-        updatingSkipSwitches = true;
         binding.switchSkipDeps.setChecked(new BuildSettings(sc_id).isSkipSubDependencies());
-        updatingSkipSwitches = false;
         binding.switchSkipDeps.setOnCheckedChangeListener((button, checked) -> {
-            if (updatingSkipSwitches) return;
             GradleSyncEngine.setSkipSubDependenciesForAll(sc_id, checked);
-            buildSettings = new BuildSettings(sc_id);
-            updatingSkipSwitches = true;
-            binding.switchSkipSub.setChecked(checked);
-            updatingSkipSwitches = false;
             viewModel.reload();
             SketchwareUtil.toast(checked ? "Only listed dependencies will be downloaded. Run Sync to apply." : "Sub-dependencies will be downloaded too. Run Sync to apply.");
         });
@@ -870,7 +888,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
 
     private void setupBuildSettings() {
         binding.switchOffline.setChecked(buildSettings.isOfflineCacheEnabled());
-        binding.switchSkipSub.setChecked(new BuildSettings(sc_id).isSkipSubDependencies());
 
         int max = BuildSettings.getMaxParallelThreads();
         boolean adjustable = max >= 2;
@@ -913,14 +930,7 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
     }
 
     private void applyBuildSettings() {
-        boolean skipSub = binding.switchSkipSub.isChecked();
-        if (skipSub != new BuildSettings(sc_id).isSkipSubDependencies()) {
-            GradleSyncEngine.setSkipSubDependenciesForAll(sc_id, skipSub);
-        }
         buildSettings = new BuildSettings(sc_id);
-        updatingSkipSwitches = true;
-        binding.switchSkipDeps.setChecked(skipSub);
-        updatingSkipSwitches = false;
         buildSettings.setValue(BuildSettings.SETTING_OFFLINE_CACHE, binding.switchOffline.isChecked()
                 ? ProjectSettings.SETTING_GENERIC_VALUE_TRUE : ProjectSettings.SETTING_GENERIC_VALUE_FALSE);
         int threads = Math.max(1, Math.min((int) binding.sliderThreads.getValue(), BuildSettings.getMaxParallelThreads()));
@@ -1031,9 +1041,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
         MenuItem sync = menu.add(Menu.NONE, MENU_SYNC, Menu.NONE, "Sync Gradle");
         sync.setIcon(R.drawable.ic_mtrl_sync);
         sync.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-        MenuItem refresh = menu.add(Menu.NONE, MENU_REFRESH, Menu.NONE, "Refresh");
-        refresh.setIcon(R.drawable.ic_mtrl_refresh);
-        refresh.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         MenuItem custom = menu.add(Menu.NONE, MENU_CUSTOM, Menu.NONE, "Use Custom Gradle");
         custom.setCheckable(true);
         custom.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
@@ -1056,8 +1063,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
         }
         MenuItem custom = menu.findItem(MENU_CUSTOM);
         if (custom != null) custom.setChecked(isCustomGradleEnabled());
-        MenuItem refresh = menu.findItem(MENU_REFRESH);
-        if (refresh != null) refresh.setEnabled(!running);
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -1070,10 +1075,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
             }
             case MENU_SYNC -> {
                 onSyncClicked();
-                return true;
-            }
-            case MENU_REFRESH -> {
-                refreshFromDisk();
                 return true;
             }
             case MENU_CUSTOM -> {
@@ -1091,31 +1092,6 @@ public class ManageGradleActivity extends BaseAppCompatActivity {
             }
         }
         return super.onOptionsItemSelected(item);
-    }
-
-    private void refreshFromDisk() {
-        if (viewModel.isRunning()) {
-            SketchwareUtil.toast("Wait for the running sync to finish");
-            return;
-        }
-        stashEditor();
-        if (anyDirty()) {
-            new MaterialAlertDialogBuilder(this)
-                    .setTitle("Reload from disk")
-                    .setMessage("Unsaved edits will be lost.")
-                    .setPositiveButton("Reload", (d, w) -> reloadAllFromDisk())
-                    .setNegativeButton("Cancel", null)
-                    .show();
-        } else {
-            reloadAllFromDisk();
-        }
-    }
-
-    private void reloadAllFromDisk() {
-        buffers.clear();
-        saved.clear();
-        loadFile(currentFile, true);
-        viewModel.reload();
     }
 
     private boolean isCustomGradleEnabled() {

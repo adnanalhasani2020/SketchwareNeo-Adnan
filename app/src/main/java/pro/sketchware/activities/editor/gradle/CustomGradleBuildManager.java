@@ -59,6 +59,10 @@ public final class CustomGradleBuildManager {
 
         GradleParser parser = new GradleParser();
         ParsedGradle parsed = parser.parseFile(app, null);
+        // Match the generated Gradle properties default. Explicit custom properties below
+        // override this value and are passed into Neo's standalone R8 runner as well.
+        parsed.r8FullModeEnabled = false;
+        parsed.explicitFields.add(ParsedGradle.FIELD_R8_FULL_MODE);
         parser.parsePropertiesInto(new File(dir, FILE_PROPERTIES), parsed);
         parser.applyToProjectBuildSettings(parsed, scId);
 
