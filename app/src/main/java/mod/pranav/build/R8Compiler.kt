@@ -30,22 +30,6 @@ class R8Compiler(
         private const val TAG = "R8Compiler"
     }
 
-    /**
-     * Bounded, adaptive thread count for R8's own internal executor.
-     *
-     * R8.run(command) alone lets R8 create its own executor sized off
-     * Runtime.getRuntime().availableProcessors(), which on a modern device can mean 6-8
-     * concurrent worker threads during the shaking/Enqueuer phase, each holding its own
-     * working set of IR/graph structures. That is what was actually driving peak heap usage
-     * during the OutOfMemoryError seen in production, not project size alone.
-     *
-     * This never exceeds the device's actual CPU count, never goes below 1, and is throttled
-     * further by two independent, conservative signals rather than CPU count alone:
-     *  - maxHeapMb: this process's actual heap ceiling (reflects largeHeap + device limits)
-     *  - programSizeMb: total size of R8's program inputs, a proxy for shaking graph size —
-     *    a large program input gets capped at 2 threads regardless of available heap, since
-     *    each thread's working set is heavier the more classes are in play.
-     */
     private fun computeSafeThreadCount(programByteSize: Long): Int {
         val runtime = Runtime.getRuntime()
         val maxHeapMb = runtime.maxMemory() / (1024 * 1024)
@@ -59,8 +43,6 @@ class R8Compiler(
         }
 
         val programSizeMb = programByteSize / (1024 * 1024)
-        // R8's graph/IR memory grows non-linearly; throttle early instead of waiting
-        // for Android to kill the isolated compiler process on medium-size projects.
         val sizeAdjustedCap = when {
             programSizeMb > 20 -> 1
             programSizeMb > 8 -> minOf(heapCap, 2)
@@ -74,8 +56,6 @@ class R8Compiler(
     fun compile() {
         val output = Paths.get(yq.binDirectoryPath, "dex")
         Files.createDirectories(output)
-        // R8 requires a clean output directory. Remove stale dex files from previous
-        // failed/cancelled builds so they cannot be mixed into the new APK.
         output.toFile().listFiles()?.forEach { file ->
             if (file.isFile && file.name.matches(Regex("classes(?:[0-9]+)?\\.dex"))) {
                 if (!file.delete()) throw java.io.IOException("Unable to remove stale R8 output: ${file.name}")
@@ -97,7 +77,6 @@ class R8Compiler(
                 errorLog.append("ERROR: ").append(diagnostic.diagnosticMessage).append("\n")
             }
             override fun warning(diagnostic: Diagnostic) {
-                // Warnings are ignored to keep logs clean
             }
             override fun info(diagnostic: Diagnostic) {}
         }
@@ -108,21 +87,15 @@ class R8Compiler(
             .addProguardConfigurationFiles(configs.map { Paths.get(it) })
             .setProguardMapOutputPath(Paths.get(yq.proguardMappingPath))
             .setMinApiLevel(minApi)
-            // R8's Java API defaults to full mode. Mirror the actual gradle.properties
-            // value which CustomGradleBuildManager imported into the project's settings.
             .setProguardCompatibility(!ProguardHandler(yq.sc_id).isR8FullModeEnabled())
             .addLibraryFiles(libs.map { Paths.get(it) })
             .setOutput(output, OutputMode.DexIndexed)
             .setMode(CompilationMode.RELEASE)
 
         if (multiDexEnabled) {
-            // R8 automatically multi-dexes when OutputMode.DexIndexed is used without a main dex list
+
         }
 
-        // --- Diagnostics: cheap, logcat-only (filter on tag "R8Compiler"), no persisted
-        // file, no UI impact. Exists to answer, from real runs, whether Enqueuer/shaking is
-        // the actual bottleneck, whether the input graph is unexpectedly large, and whether
-        // the selected thread count correlates with success/failure and duration. ---
         val programBytes = inputs.sumOf { runCatching { File(it).length() }.getOrDefault(0L) }
         val threadCount = computeSafeThreadCount(programBytes)
         val runtime = Runtime.getRuntime()
@@ -150,8 +123,7 @@ class R8Compiler(
                 throw java.io.IOException("R8 completed without producing a non-empty classes.dex output.")
             }
         } catch (e: Exception) {
-            // Return precise diagnostics to the isolated Service instead of treating a
-            // diagnostics-only failure as a successful shrink and packaging stale output.
+
             if (errorLog.isNotEmpty() && e.message?.contains(errorLog.toString()) != true) {
                 throw RuntimeException("R8 Error:\n$errorLog", e)
             } else {

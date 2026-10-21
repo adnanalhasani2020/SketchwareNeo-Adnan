@@ -51,7 +51,6 @@ public class Ix {
         buildSettings = new BuildSettings(jq.sc_id);
         frc = new FileResConfig(c.sc_id);
         a.addAttribute("xmlns", "android", "http://schemas.android.com/apk/res/android");
-        // Added tools namespace for modern attributes
         a.addAttribute("xmlns", "tools", "http://schemas.android.com/tools");
     }
 
@@ -182,7 +181,6 @@ public class Ix {
         actionTag.addAttribute("android", "name", receiverName);
         intentFilterTag.addChildNode(actionTag);
         
-        // BUG FIX: Always declare exported for components with intent-filters in API 31+
         if (targetsSdkVersion31OrHigher) {
             receiverTag.addAttribute("android", "exported", "true");
         }
@@ -208,7 +206,6 @@ public class Ix {
         XmlBuilder serviceTag = new XmlBuilder("service");
         serviceTag.addAttribute("android", "name", serviceName);
         serviceTag.addAttribute("android", "enabled", "true");
-        // BUG FIX: Explicitly define exported status for standalone services to avoid crash
         serviceTag.addAttribute("android", "exported", "false"); 
         applicationTag.addChildNode(serviceTag);
     }
@@ -466,9 +463,6 @@ public class Ix {
             writePermission(a, "com.google.android.gms.permission.AD_ID");
             writePermission(a, "android.permission.ACCESS_NETWORK_STATE");
             writePermission(a, "android.permission.INTERNET");
-            // Match the Unity Ads 4.21.0 AAR manifest. These permissions are declared
-            // by the SDK regardless of targetSdkVersion; do not silently drop them when
-            // generating a manifest without Android's normal AAR manifest merger.
             writePermission(a, "android.permission.ACCESS_ADSERVICES_TOPICS");
             writePermission(a, "android.permission.ACCESS_ADSERVICES_ATTRIBUTION");
         }
@@ -483,7 +477,6 @@ public class Ix {
             writePermission(a, "com.google.android.c2dm.permission.RECEIVE");
         }
         
-        // BUG FIX: Required for API 33+ (Android 13+) notifications
         if (targetSdkVersion >= 33) {
             writePermission(a, "android.permission.POST_NOTIFICATIONS");
         }
@@ -529,7 +522,6 @@ public class Ix {
                 queries.addChildNode(intent);
             }
             if (c.isUnityAdsEnabled) {
-                // Unity Ads 4.21.0 manifest queries this attribution referral action on Android 11+.
                 XmlBuilder referralIntent = new XmlBuilder("intent");
                 XmlBuilder referralAction = new XmlBuilder("action");
                 referralAction.addAttribute("android", "name", "com.attribution.REFERRAL_PROVIDER");
@@ -554,7 +546,6 @@ public class Ix {
         applicationTag.addAttribute("android", "icon", "@mipmap/ic_launcher");
         applicationTag.addAttribute("android", "label", "@string/app_name");
         
-        // BUG FIX: Essential for AAPT2 and modern components parsing
         applicationTag.addAttribute("android", "appComponentFactory", "androidx.core.app.CoreComponentFactory");
 
         String applicationClassName = settings.getValue(ProjectSettings.SETTING_APPLICATION_CLASS, ".SketchApplication");
@@ -611,7 +602,6 @@ public class Ix {
                     }
                 }
                 
-                // BUG FIX: Activity Exported enforcement for API 31+
                 boolean hasIntentFilter = projectFileBean.fileName.equals(AndroidManifestInjector.getLauncherActivity(c.sc_id));
                 
                 if (hasIntentFilter) {
@@ -628,7 +618,6 @@ public class Ix {
                     }
                     activityTag.addChildNode(intentFilterTag);
                 } else if (targetsSdkVersion31OrHigher && !AndroidManifestInjector.isActivityExportedUsed(c.sc_id, javaName)) {
-                    // Regular activities without intent filters MUST explicitly declare exported="false"
                     activityTag.addAttribute("android", "exported", "false");
                 }
                 
@@ -645,7 +634,6 @@ public class Ix {
             activityTag.addAttribute("android", "screenOrientation", "portrait");
             activityTag.addAttribute("android", "theme", "@style/AppTheme.DebugActivity");
             
-            // BUG FIX: Explicit exported for API 31+
             if (targetsSdkVersion31OrHigher) {
                 activityTag.addAttribute("android", "exported", "false");
             }
@@ -679,8 +667,6 @@ public class Ix {
             applicationTag.addChildNode(testingActivity);
         }
         if (c.isUnityAdsEnabled) {
-            // Unity Ads 4.21.0's bundled AAR declares FullScreenWebViewDisplay and AdTaskRemovalDetectionService.
-            // Do not emit obsolete AdUnitActivity class names from older SDK versions.
             XmlBuilder unityActivity = new XmlBuilder("activity");
             unityActivity.addAttribute("android", "name", "com.unity3d.ads.adplayer.FullScreenWebViewDisplay");
             unityActivity.addAttribute("android", "configChanges", "fontScale|keyboard|keyboardHidden|locale|mnc|mcc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|touchscreen");
@@ -781,7 +767,6 @@ public class Ix {
             activityTag.addAttribute("android", "configChanges", "orientation|screenSize");
         }
         
-        // BUG FIX: Strict Exported Enforcement for Extra injected Java files
         if (targetsSdkVersion31OrHigher && !specifiedExported) {
              activityTag.addAttribute("android", "exported", "false");
         }

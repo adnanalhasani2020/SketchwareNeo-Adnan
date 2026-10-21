@@ -43,7 +43,7 @@ public class SrcViewerActivity extends BaseAppCompatActivity {
     private ArrayList<SrcCodeBean> sourceCodeBeans;
 
     private String currentFileName;
-    private int editorFontSize = 14; // Default to 14 for better readability
+    private int editorFontSize = 14;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -107,7 +107,7 @@ public class SrcViewerActivity extends BaseAppCompatActivity {
                     }
                 });
             } catch (Exception ignored) {
-                // May occur if the activity is killed
+
             }
         }).start();
     }
@@ -153,13 +153,12 @@ public class SrcViewerActivity extends BaseAppCompatActivity {
                 currentFileName = bean.srcFileName;
                 binding.toolbar.setSubtitle(currentFileName);
                 
-                // Switch Language highlighting
+
                 if (currentFileName.endsWith(".xml")) {
                     EditorUtils.loadXmlConfig(binding.editor);
                 } else if (currentFileName.endsWith(".java")) {
                     EditorUtils.loadJavaConfig(binding.editor);
                 } else if (currentFileName.endsWith(".kt")) {
-                     // Adding Kotlin highlighting support just in case
                      EditorUtils.loadJavaConfig(binding.editor); 
                 }
                 break;
@@ -185,7 +184,6 @@ public class SrcViewerActivity extends BaseAppCompatActivity {
         ListView listView = new ListView(this);
         layout.addView(listView);
 
-        // Prepare lists
         ArrayList<String> allFileNames = new ArrayList<>();
         for (SrcCodeBean bean : sourceCodeBeans) {
             allFileNames.add(bean.srcFileName);
@@ -199,7 +197,6 @@ public class SrcViewerActivity extends BaseAppCompatActivity {
         
         androidx.appcompat.app.AlertDialog dialog = builder.create();
 
-        // Search Filter Logic
         searchInput.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -213,7 +210,6 @@ public class SrcViewerActivity extends BaseAppCompatActivity {
             public void afterTextChanged(Editable s) {}
         });
 
-        // Click to load
         listView.setOnItemClickListener((parent, view, position, id) -> {
             String selectedFileName = adapter.getItem(position);
             loadSelectedFile(selectedFileName);

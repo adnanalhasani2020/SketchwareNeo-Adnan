@@ -281,7 +281,6 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
             projectMetadata.put("sketchware_ver", GB.d(getApplicationContext()));
             lC.b(sc_id, projectMetadata);
             
-            // This is the specific fix for "Unknown" timing issue: Touching the project directory file explicitly
             String projectFilePath = wq.e() + File.separator + sc_id + File.separator + "project";
             File projectFileActual = new File(projectFilePath);
             if (projectFileActual.exists()) {
@@ -1076,8 +1075,6 @@ private void checkAndInitGit() {
     
     void toAndroidManifestManager() {
         if (projectFile == null) return;
-        // Always open the manager first. The manager owns the custom-manifest toggle
-        // and exposes the editor button only while that feature is enabled.
         launchActivity(AndroidManifestInjection.class, null, new Pair<>("file_name", currentJavaFileName));
     }
     
@@ -1201,8 +1198,6 @@ private void checkAndInitGit() {
             try {
                 var sc_id = DesignActivity.sc_id;
                 CustomGradleBuildManager.prepareBuild(sc_id);
-                // Custom Gradle may update applicationId/version metadata. Recreate the
-                // generator after parsing so this build doesn't keep stale identity fields.
                 var q = new yq(activity.getApplicationContext(), sc_id);
                 activity.q = q;
                 onProgress("Deleting temporary files...", 1);

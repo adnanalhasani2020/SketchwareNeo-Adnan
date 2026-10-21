@@ -387,7 +387,6 @@ public class br extends qA implements View.OnClickListener {
                     var event = getItem(position);
                     holder.button.getName().setText(event.eventName);
                     holder.button.getIcon().setImageResource(oq.getEventIconResource(event.eventName));
-                    // Apply state tint after replacing the drawable; setImageResource may reset it.
                     holder.button.onEventAdded();
                     holder.button.setClickListener(v -> {
                         if (!mB.a()) {
@@ -431,7 +430,6 @@ public class br extends qA implements View.OnClickListener {
                     var eventName = getItem(position);
                     holder.button.getName().setText(eventName);
                     holder.button.getIcon().setImageResource(oq.getEventIconResource(eventName));
-                    // Apply state tint after replacing the drawable; setImageResource may reset it.
                     holder.button.onEventAvailableToAdd();
                     holder.button.setClickListener(v -> {
                         if (!mB.a()) {

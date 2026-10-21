@@ -17,8 +17,8 @@ android {
         //noinspection ExpiredTargetSdkVersion since we don't target getting Sketchware Neo on Google Play.
         targetSdk = 28
         minSdk = 26
-        versionCode = 158
-        versionName = "v7.0.0"
+        versionCode = 160
+        versionName = "v7.0.1"
 
         buildConfigField("String", "GIT_HASH", "\"${gitCommitHash}\"")
 

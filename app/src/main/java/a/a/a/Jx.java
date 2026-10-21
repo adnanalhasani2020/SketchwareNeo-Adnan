@@ -876,7 +876,7 @@ public class Jx {
             Pair<String, String> next = pairs.get(index);
             String name = next.first + "_moreBlock";
             String code = Lx.getMoreBlockCode(next.first, next.second, new Fx(projectFileBean.getActivityName(), name, buildConfig, projectDataManager.a(javaName, name), isViewBindingEnabled).a());
-            // Overloads for parameters with a default value; returns the code unchanged for MoreBlocks without defaults.
+
             code = MoreBlockOverloads.append(projectDataManager.a, javaName, next.first, next.second, code);
             if (index < (pairsSize - 1)) {
                 moreBlocks.add(code);

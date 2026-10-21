@@ -91,8 +91,7 @@ public class AddFontActivity extends BaseDialogActivity implements View.OnClickL
                     Np.g().a(sc_id, resourceBean);
                 } catch (Exception e) {
                     Log.e("AddFontActivity", "Failed to add font to collection", e);
-                    // Well, (parts of) the bytecode's lying, yy can be thrown.
-                    //noinspection ConstantConditions
+
                     if (e instanceof yy) {
                         switch (e.getMessage()) {
                             case "duplicate_name" ->

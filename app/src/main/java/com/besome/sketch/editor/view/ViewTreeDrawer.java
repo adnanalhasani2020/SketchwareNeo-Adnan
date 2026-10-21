@@ -97,7 +97,7 @@ public class ViewTreeDrawer {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         drawerRoot = createView();
-        int maxWidth = SketchwareUtil.dpToPx(300); // Match the Design Drawer width.
+        int maxWidth = SketchwareUtil.dpToPx(300);
         DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
         int drawerWidth = Math.min(maxWidth, (int) (metrics.widthPixels * 0.88f));
         FrameLayout.LayoutParams drawerParams = new FrameLayout.LayoutParams(
@@ -185,7 +185,6 @@ public class ViewTreeDrawer {
         };
         recyclerView.setLayoutManager(layoutManager);
         recyclerView.setItemViewCacheSize(30);
-        // HasFixedSize must be false because row widths vary drastically based on depth and wrap_content layout
         recyclerView.setHasFixedSize(false);
         
         buildTree();
@@ -245,7 +244,6 @@ public class ViewTreeDrawer {
                 }
                 boolean moved = listener != null && listener.onMoveRequested(source.viewBean.id, target.viewBean.id);
                 if (moved) {
-                    // Keep the tree open after reparenting and rebuild it from the updated ViewBeans.
                     buildTree();
                     rebuildDisplayList();
                     adapter.submitList(new ArrayList<>(displayNodes));
@@ -299,8 +297,7 @@ public class ViewTreeDrawer {
             TreeNode node = createNode(root, childrenMap, 0, true, new ArrayList<>(), new HashSet<>(), visited);
             if (node != null) rootNodes.add(node);
         }
-        // Malformed/cyclic data can leave a component graph with no top-level node. Show the
-        // remaining components as roots instead of recursing forever or displaying a blank tree.
+
         for (ViewBean bean : currentViews) {
             if (bean == null || bean.id == null || bean.id.isEmpty() || visited.contains(bean.id)) continue;
             TreeNode node = createNode(bean, childrenMap, 0, true, new ArrayList<>(), new HashSet<>(), visited);

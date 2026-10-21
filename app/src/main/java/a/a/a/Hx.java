@@ -136,7 +136,6 @@ public class Hx {
             String eventKey = eventBean.targetId + "_" + eventBean.eventName;
             ArrayList<BlockBean> eventLogicBlocks = logicBlocks.get(eventKey);
             
-            // --> Updated Fx call with eventKey pass <--
             String eventLogic = (eventLogicBlocks == null || eventLogicBlocks.isEmpty()) ? "" :
                     new Fx(projectFileBean.getActivityName(), eventKey, jq, eventLogicBlocks, isViewBindingEnabled).a();
 

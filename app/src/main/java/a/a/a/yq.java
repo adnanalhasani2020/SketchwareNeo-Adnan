@@ -157,8 +157,7 @@ public class yq {
     }
 
     private String processAndroidX(String code) {
-        // The legacy Force AndroidX option was removed because it silently rewrote
-        // project source without updating dependency declarations. Preserve source as authored.
+
         return code;
     }
 
@@ -257,8 +256,7 @@ public class yq {
         try {
             properties.load(new StringReader(source));
         } catch (IOException | IllegalArgumentException ignored) {
-            // Preserve the user's content even when Properties cannot parse it fully;
-            // Gradle will report malformed property syntax during sync/build.
+
         }
 
         StringBuilder result = new StringBuilder(source);
@@ -536,8 +534,6 @@ public class yq {
                     case ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN ->
                             N.x.isFBGoogleUsed = true;
                     case ComponentBean.COMPONENT_TYPE_UNITY_ADS -> {
-                        // Existing Unity Ads components require the SDK even if the library switch
-                        // was later disabled; otherwise generated source would reference missing classes.
                         if (!N.isUnityAdsEnabled) {
                             N.isUnityAdsEnabled = true;
                             N.setupUnityAds(adMob);
@@ -822,20 +818,15 @@ public class yq {
     private void generateCppBuildFiles(boolean isCustomGradleEnabled) {
     if (!CppBuildHelper.hasCppFiles(sc_id)) return;
 
-    // Copy source files to build tree
     CppBuildHelper.copyCppFilesToBuildDir(sc_id, cppFilesPath);
 
-    // Generate CMakeLists.txt
     String cmakePath = projectMyscPath + "app" + File.separator + "CMakeLists.txt";
     if (!FileUtil.isExistFile(cmakePath)) {
         FileUtil.writeFile(cmakePath, CppBuildHelper.generateCmakeLists(projectName));
     }
 
-    // Custom Gradle users own their app/build.gradle entirely — don't touch content they
-    // provided. They can add externalNativeBuild themselves using the CMakeLists.txt above.
     if (isCustomGradleEnabled) return;
 
-    // Inject externalNativeBuild block into app/build.gradle
     String appGradlePath = projectMyscPath + "app" + File.separator + "build.gradle";
     String gradleContent = FileUtil.readFile(appGradlePath);
     String injected = CppBuildHelper.injectCmakeBlockIntoGradle(gradleContent);

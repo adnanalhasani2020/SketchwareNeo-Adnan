@@ -182,7 +182,6 @@ public class ViewEditorFragment extends qA {
         }
         if (source == null || target == null || !isTreeContainer(target)) return false;
 
-        // Reject cycles by walking the target's ancestor chain before mutating the project model.
         String cursorId = target.id;
         java.util.HashSet<String> visited = new java.util.HashSet<>();
         while (cursorId != null && !cursorId.isEmpty() && !"root".equals(cursorId)) {
@@ -333,7 +332,7 @@ public class ViewEditorFragment extends qA {
         
         viewEditor.extraWidgetLayout("", "ConstraintLayout");
         viewEditor.extraWidgetLayout("", "CoordinatorLayout");
-        // <include> needs an existing layout resource; seed it with a valid current project layout.
+
         if (sc_id != null) {
             try {
                 var activityLayouts = jC.b(sc_id).c();
@@ -404,8 +403,6 @@ public class ViewEditorFragment extends qA {
         viewEditor.addWidget(PaletteWidget.b.k, "", "CalendarView", "CalendarView");
         widgetsCreatorManager.addWidgetsByTitle("Date & Time");
 
-        // Material widgets are intentionally hidden unless Material 3 is enabled
-        // for this project. This avoids adding classes whose dependency/theme is absent.
         if (isMaterial3Enabled()) {
             viewEditor.paletteWidget.extraTitle("Material 3", 1);
             viewEditor.extraWidget("", "MaterialButton", "MaterialButton");
@@ -421,14 +418,14 @@ public class ViewEditorFragment extends qA {
             viewEditor.extraWidget("", "Slider", "Slider");
             viewEditor.extraWidget("", "ExtendedFloatingActionButton", "ExtendedFloatingActionButton");
             viewEditor.extraWidget("", "ShapeableImageView", "ShapeableImageView");
-            // Layout containers live in the layout palette, with their own M3 heading.
+
             viewEditor.paletteWidget.extraTitle("M3 Layouts", 0);
             viewEditor.extraWidgetLayout("", "TextInputLayout");
             viewEditor.extraWidgetLayout("", "MaterialCardView");
             viewEditor.extraWidgetLayout("", "MaterialButtonToggleGroup");
             viewEditor.extraWidgetLayout("", "ChipGroup");
         }
-        // User-defined Material 3 palette items share the same gated category as built-ins.
+
         if (isMaterial3Enabled()) {
             widgetsCreatorManager.addWidgetsByTitle("Material 3");
         }

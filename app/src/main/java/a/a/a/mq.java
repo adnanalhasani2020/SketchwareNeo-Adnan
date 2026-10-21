@@ -95,8 +95,7 @@ public class mq {
                     "PhoneAuthProvider.OnVerificationStateChangedCallbacks";
             case ComponentBean.COMPONENT_TYPE_FIREBASE_CLOUD_MESSAGE -> "FirebaseCloudMessage";
             case ComponentBean.COMPONENT_TYPE_FIREBASE_AUTH_GOOGLE_LOGIN -> "GoogleSignInClient";
-            // Unity Ads is a non-view built-in component. Without this mapping,
-            // generated source used an empty type and emitted `private unity;`.
+
             case ComponentBean.COMPONENT_TYPE_UNITY_ADS -> "UnityAds";
             default -> ComponentsHandler.var(componentId);
         };

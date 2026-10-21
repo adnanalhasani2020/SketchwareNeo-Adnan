@@ -188,9 +188,6 @@ public class Ox {
         String backgroundResource = viewBean.layout.backgroundResource;
         if (backgroundResource != null) {
             backgroundResource = backgroundResource.trim();
-            // Older picker/import flows can store an empty string, "none", or the
-            // incomplete reference "@drawable/" for the no-resource selection.
-            // Normalize those sentinels before deciding whether to emit a drawable.
             if (backgroundResource.isEmpty()
                     || "NONE".equalsIgnoreCase(backgroundResource)
                     || "@drawable/".equalsIgnoreCase(backgroundResource)) {
@@ -307,7 +304,6 @@ public class Ox {
         XmlBuilder widgetTag = convert.isEmpty() ? new XmlBuilder(viewBean.getClassInfo().getClassName()) :
                 new XmlBuilder(convert.replaceAll(" ", ""));
                 
-        // An include is only valid when its target layout exists. Never invent a layout name from its view ID.
         if (convert.equals("include")) {
             if (viewBean.customView == null || viewBean.customView.trim().isEmpty()
                     || "none".equalsIgnoreCase(viewBean.customView.trim())) {

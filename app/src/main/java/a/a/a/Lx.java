@@ -178,9 +178,6 @@ public class Lx {
                 for (HashMap<String, Object> library : localLibraries) {
                     String dependency = (String) library.get("dependency");
                     if (dependency != null && !dependency.isEmpty()) {
-                        // Unity Ads is emitted once from metadata.isUnityAdsEnabled above.
-                        // Its local resolver entry remains available to Neo's internal DEX builder,
-                        // but must not duplicate the direct Maven coordinate in exported Gradle.
                         if (metadata.isUnityAdsEnabled
                                 && dependency.matches("com\\.unity3d\\.ads:unity-ads:[^:]+")) {
                             continue;

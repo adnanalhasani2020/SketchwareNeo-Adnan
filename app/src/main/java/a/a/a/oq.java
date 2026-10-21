@@ -23,7 +23,6 @@ public class oq {
         for (String event : baseEvents) {
             events.add(event);
         }
-        // ADDED: Make onRequestPermissionsResult an explicitly editable activity event
         if (!events.contains("onRequestPermissionsResult")) {
             events.add("onRequestPermissionsResult");
         }

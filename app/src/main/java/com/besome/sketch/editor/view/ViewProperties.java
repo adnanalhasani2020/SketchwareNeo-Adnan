@@ -59,13 +59,11 @@ public class ViewProperties extends RelativeLayout implements AdapterView.OnItem
         spinner.setOnItemSelectedListener(this);
     }
 
-    // Call this method whenever the views update in the editor fragment
     public void updateViewList(String sc_id, String xmlName, ArrayList<ViewBean> currentViews) {
         viewsIdList.clear();
         treeNodesList.clear();
 
         if (isTreeViewEnabled && currentViews != null) {
-            // Build tree hierarchy
             HashMap<String, ArrayList<ViewBean>> childrenMap = new HashMap<>();
             ArrayList<ViewBean> rootViews = new ArrayList<>();
 
@@ -81,7 +79,6 @@ public class ViewProperties extends RelativeLayout implements AdapterView.OnItem
                 buildTreeList(root, childrenMap, 0);
             }
         } else if (currentViews != null) {
-            // Flat list
             for (ViewBean bean : currentViews) {
                 viewsIdList.add(bean.id);
             }
@@ -179,11 +176,9 @@ public class ViewProperties extends RelativeLayout implements AdapterView.OnItem
             viewIdSpinnerItem.a(0, itemId, isSelected);
             viewIdSpinnerItem.a(false, 0xff404040, 0xff404040);
 
-            // Apply indentation for tree view if it's the dropdown list
             if (useTree && isDropDown) {
                 int depth = treeData.get(position).depth;
                 int paddingPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, depth * 20, context.getResources().getDisplayMetrics());
-                // Add a visual tree branch marker if depth > 0
                 if (depth > 0) {
                     viewIdSpinnerItem.a(0, " └ " + itemId, isSelected);
                 }

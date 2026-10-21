@@ -79,7 +79,7 @@ public class pu extends qA {
             String selectedColorHex = data.getStringExtra("iconColorHex");
 
             if (names != null && paths != null && names.size() == paths.size() && !names.isEmpty()) {
-                // Multi-icon Import Processing
+
                 for (int i = 0; i < names.size(); i++) {
                     ProjectResourceBean icon = new ProjectResourceBean(
                             ProjectResourceBean.PROJECT_RES_TYPE_FILE,
@@ -92,7 +92,7 @@ public class pu extends qA {
                     images.add(icon);
                 }
             } else if (data.hasExtra("iconName") && data.hasExtra("iconPath")) {
-                // Fallback Single-icon Import Processing
+
                 ProjectResourceBean icon = new ProjectResourceBean(
                         ProjectResourceBean.PROJECT_RES_TYPE_FILE,
                         data.getStringExtra("iconName"), data.getStringExtra("iconPath")

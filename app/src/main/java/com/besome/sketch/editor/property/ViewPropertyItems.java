@@ -306,9 +306,7 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         if (d != null) {
             ViewBean cloned = c.clone();
             i(c);
-            // Property editors are applied in i(c). If the user explicitly enters a
-            // property-backed attribute in Custom attributes, reapply that explicit value
-            // last so it wins in generated XML instead of being silently overwritten.
+
             View view = f.get("property_inject");
             if (view instanceof PropertyInputItem inputItem) {
                 LinkedHashMap<String, String> overrides = inputItem.getExplicitPropertyAttributeOverrides();
@@ -398,7 +396,6 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         if (value.matches("[0-9]+(?:\\.[0-9]+)?")) return value + "dp";
         if (value.matches("[0-9]+(?:\\.[0-9]+)?(?:dp|sp|px)")) return value;
         if (value.matches("@[a-zA-Z0-9_.]+/[a-zA-Z0-9_.]+") || value.matches("\\?attr/[a-zA-Z0-9_]+")) return value;
-        // Never write arbitrary user text as a resource dimension into Android XML.
         return "";
     }
 
@@ -515,7 +512,6 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
         bean.inject = setInjectedAttr(bean, "android:fillViewport", parts[0]);
         bean.inject = setInjectedAttr(bean, "android:nestedScrollingEnabled", parts[1]);
         bean.inject = setInjectedAttr(bean, "android:clipToPadding", parts[2]);
-        // Leave the framework default unforced, but preserve the selectable default in the dialog.
         bean.inject = setInjectedAttr(bean, "android:overScrollMode", "ifContentScrolls".equals(parts[3]) ? "" : parts[3]);
     }
 
@@ -659,10 +655,7 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                         String prefix = parser.getAttributePrefix(i);
                         String qualifiedName = prefix == null || prefix.isEmpty()
                                 ? localName : prefix + ":" + localName;
-                        // Preserve the namespace prefix. Property-backed attributes are stored
-                        // as app:icon, android:value, etc.; dropping the prefix creates duplicate
-                        // unqualified XML attributes and prevents property/custom precedence from
-                        // being deterministic.
+
                         attributes.put(qualifiedName, parser.getAttributeValue(i));
                     }
                 }
@@ -863,8 +856,6 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                 a(bean, "property_include_layout");
             }
             if (isMaterialButton(bean)) {
-                // The extended FAB has its own shape/style; expose icon-related properties
-                // without letting a generic button-style choice flatten it into a button.
                 if (bean.convert == null || !bean.convert.endsWith("ExtendedFloatingActionButton")) {
                     a(bean, "property_material_button_style");
                 }
@@ -905,7 +896,6 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                 a(bean, "property_collapsing_status_bar_scrim");
             }
             if (isParentCollapsingToolbarLayout(bean)) {
-                // These are layout params supplied by the CollapsingToolbarLayout parent.
                 a(bean, "property_collapsing_parallax_multiplier");
             }
             if (classInfo.b("Spinner")) {
@@ -968,7 +958,6 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
             if (classInfo.b("ProgressBar")) {
                 a(bean, "property_max");
                 a(bean, "property_progress");
-                // Material indicators use their own three-value selector, not platform ProgressBar styles.
                 if (!isMaterialProgressIndicator(bean)) {
                     a(bean, "property_progressbar_style");
                 }
@@ -1244,8 +1233,7 @@ public class ViewPropertyItems extends LinearLayout implements Kw, View.OnClickL
                             || selectedBackground.trim().isEmpty()
                             || "NONE".equalsIgnoreCase(selectedBackground.trim())
                             || "@drawable/".equalsIgnoreCase(selectedBackground.trim())) {
-                        // Keep the no-resource selection absent in the model. Writing an
-                        // empty drawable name would produce android:background="@drawable/".
+
                         bean.layout.backgroundResource = null;
                     } else {
                         String normalizedBackground = selectedBackground.trim();

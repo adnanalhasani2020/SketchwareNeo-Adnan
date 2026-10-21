@@ -74,7 +74,6 @@ public class rs extends qA implements View.OnClickListener, MoreblockImporterDia
     private final ActivityResultLauncher<Intent> addEventLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
             result -> refreshEvents());
     private final ActivityResultLauncher<Intent> openEvent = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-        // in case any Events were added, e.g. a new MoreBlock
         refreshEvents();
     });
 

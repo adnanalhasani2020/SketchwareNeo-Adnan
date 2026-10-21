@@ -252,7 +252,7 @@ public class AddEventActivity extends BaseAppCompatActivity implements View.OnCl
                         } else {
                             Pair<String, String> blockInformation = getMoreBlockInformation();
                             jC.a(sc_id).a(projectFile.getJavaName(), blockInformation.first, blockInformation.second);
-                            // Default values of the parameters (none with the legacy builder, which only clears stale entries).
+
                             MoreBlockDefaultsStore.save(sc_id, projectFile.getJavaName(), blockInformation.first, blockInformation.second,
                                     newMoreBlockView != null ? newMoreBlockView.getDefaults() : new java.util.LinkedHashMap<>());
                         }

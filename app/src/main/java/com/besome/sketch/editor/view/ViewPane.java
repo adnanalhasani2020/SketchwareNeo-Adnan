@@ -919,8 +919,6 @@ public class ViewPane extends RelativeLayout {
     }
 
     private void a(ViewBean view, ItemLinearLayout linearLayout) {
-        // An <include> is a reference to another layout, not an editable container.
-        // Its preview children must never become drop targets or serialized view children.
         ViewBean containerBean = linearLayout.getBean();
         if (containerBean != null && "include".equals(containerBean.convert)) return;
         float scaleX = getScaleX();
@@ -1777,7 +1775,6 @@ public class ViewPane extends RelativeLayout {
         if (to <= from) { from = 0f; to = 100f; }
         float step = Math.max(0f, parseFiniteFloat(handler.getAttributeValueOf("stepSize"), 0f));
         try {
-            // Clear step constraints before changing the range so editing values in any order is safe.
             slider.setStepSize(0f);
             slider.setValueFrom(from);
             slider.setValueTo(to);
@@ -1841,7 +1838,7 @@ public class ViewPane extends RelativeLayout {
                 && viewBean.convert.endsWith("ExtendedFloatingActionButton");
         materialButton.setStrokeWidth(PropertiesUtil.resolveSize(stroke, 0));
         materialButton.setCornerRadius(PropertiesUtil.resolveSize(radius, extendedFab ? 24 : 8));
-        // Do not force a 0px icon size when the user has not supplied app:iconSize.
+
         if (!TextUtils.isEmpty(iconSize)) {
             materialButton.setIconSize(Math.max(1, PropertiesUtil.resolveSize(iconSize, 24)));
         } else if (extendedFab) {
@@ -1862,7 +1859,7 @@ public class ViewPane extends RelativeLayout {
             default -> com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START;
         });
         if (extendedFab) {
-            // ItemExtendedFloatingActionButton scales these values as dp, like other editor items.
+
             materialButton.setPadding(16, 10, 20, 10);
             materialButton.setElevation(wB.a(getContext(), 4f));
             materialButton.setMinimumHeight((int) wB.a(getContext(), 48f));
@@ -1886,7 +1883,6 @@ public class ViewPane extends RelativeLayout {
             if (iconDrawable != null) materialButton.setIcon(iconDrawable);
         }
 
-        // Theme styles are serialized for the generated app. Approximate them in the editor preview.
         if (style.contains("IconButton")) {
             int iconExtent = PropertiesUtil.resolveSize(iconSize, 24);
             int buttonExtent = Math.max(iconExtent + (int) wB.a(getContext(), 24f), (int) wB.a(getContext(), 48f));

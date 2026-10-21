@@ -171,16 +171,10 @@ public class Fx {
                 return param;
             }
         } else if (type == 4) {
-            // Float variable literal: parsed the same way as type == 1 (double), but
-            // emits a Java float literal ("1.5f") instead of a double literal ("1.5d"),
-            // since an unsuffixed decimal literal defaults to double in Java and would
-            // fail to compile when assigned to a primitive float without an explicit cast.
             try {
                 if (param.isEmpty()) {
                     return "0f";
                 }
-                // Strip any literal suffix an upstream source (e.g. an imported "1.5f")
-                // may already carry, so it isn't doubled up below.
                 String literal = param;
                 if (literal.matches(".*[fFdD]$")) {
                     literal = literal.substring(0, literal.length() - 1);
@@ -195,16 +189,11 @@ public class Fx {
                 return param;
             }
         } else if (type == 5) {
-            // Real int variable literal: a Java int literal never carries a decimal
-            // point or an f/d/l suffix, so this is stricter than type == 1 (double) /
-            // type == 4 (float).
             try {
                 if (param.isEmpty()) {
                     return "0";
                 }
                 String literal = param;
-                // Tolerate an accidentally-typed decimal ("5.0") by truncating to its
-                // integer part, since "5.0" alone is not a valid Java int literal.
                 int dot = literal.indexOf('.');
                 if (dot >= 0) {
                     literal = literal.substring(0, dot);
@@ -215,7 +204,6 @@ public class Fx {
                 return param;
             }
         } else if (type == 0) {
-            //the same with type == 1
             if (param.isEmpty()) {
                 return "true";
             }
@@ -260,7 +248,6 @@ public class Fx {
             if (param.startsWith("R.attr.")) {
                 attr = param;
             } else if (param.startsWith("getMaterialColor(") && param.endsWith(")")) {
-                // to keep backward compatibility with old getMaterialColor calls
                 attr = param.substring("getMaterialColor(".length(), param.length() - 1);
             }
             if (attr != null) {
@@ -272,7 +259,7 @@ public class Fx {
 
     private ArrayList<String> extractParamsTypes(String input) {
         ArrayList<String> matches = new ArrayList<>();
-        Pattern pattern = Pattern.compile("%\\w+(?:\\.\\w+)?|%\\w"); // Supports %m.word.word, %m.word and %word
+        Pattern pattern = Pattern.compile("%\\w+(?:\\.\\w+)?|%\\w");
         Matcher matcher = pattern.matcher(input);
 
         while (matcher.find()) {
@@ -337,7 +324,6 @@ public class Fx {
                 opcode = String.format("%s = %s;", params.get(0), params.get(1));
                 break;
             case "setVarFloat":
-                // value slot is a Number (%d) socket -> double-typed; explicit cast keeps it compilable
                 opcode = String.format("%s = (float) (%s);", params.get(0), params.get(1));
                 break;
             case "setVarIntNum":

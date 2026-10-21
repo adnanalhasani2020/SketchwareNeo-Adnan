@@ -120,8 +120,6 @@ public class ProjectBuilder {
     private boolean isMultiDexEnabled = false; 
     // Per-build fallback only; never overwrite the user's persisted R8 setting.
     private boolean useProguardFallbackForCurrentBuild = false;
-    // Lazily derived from the final project manifest and layout XML. This list is reused for
-    // both keep-rule generation and post-R8 output verification so the two cannot drift apart.
     private ArrayList<String> cachedApplicationKeepClassesForCurrentBuild;
 
     private long timestampResourceCompilationStarted;
@@ -281,9 +279,6 @@ public class ProjectBuilder {
     public void createDexFilesFromClasses() throws Exception {
         File dexOutputDir = new File(yq.binDirectoryPath, "dex");
 
-        // CRITICAL: ProguardHandler.start() runs R8 BEFORE this method. The old implementation
-        // deleted every .dex file and only then returned for R8, leaving bin/dex/META-INF but no
-        // bytecode. Never run D8/Dx cleanup on a successful R8 path.
         if (isR8ActiveForCurrentBuild()) {
             File[] r8DexFiles = dexOutputDir.listFiles(
                     (dir, name) -> name.matches("classes([0-9]+)?\\.dex"));
@@ -298,7 +293,6 @@ public class ProjectBuilder {
             return;
         }
 
-        // Only the non-R8 D8/Dx path should clean previous DEX outputs before recompiling.
         if (dexOutputDir.exists()) {
             File[] staleDexFiles = dexOutputDir.listFiles((dir, name) -> name.matches("classes([0-9]+)?\\.dex"));
             if (staleDexFiles != null) {
@@ -831,9 +825,6 @@ public class ProjectBuilder {
             }
         }
 
-        // Application/R8 DEX files must be first. The old order put pre-dexed transitive
-        // libraries first; on debug builds with minSdk >= 21 buildApk() uses the first list item
-        // as APK classes.dex, so the app's MainActivity could be relegated to classes2.dex.
         File applicationDexDirectory = new File(yq.binDirectoryPath, "dex");
         ArrayList<File> applicationDexFiles = new ArrayList<>();
         File[] applicationDexEntries = applicationDexDirectory.listFiles(
@@ -990,8 +981,6 @@ public class ProjectBuilder {
         String[] manifestPackage = new String[] { yq.packageName };
         collectManifestEntryClasses(manifestFile, compiledClassesDir, manifestPackage, roots);
 
-        // Include qualifiers such as layout-land/, layout-sw600dp/, and layout-v21/ as well
-        // as the base layout/ folder. A custom view may exist only in a qualified layout.
         File resourceDirectory = new File(yq.resDirectoryPath);
         File[] resourceEntries = resourceDirectory.listFiles();
         if (resourceEntries != null) {
@@ -1047,7 +1036,6 @@ public class ProjectBuilder {
                                 manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
                     }
                     if ("application".equals(tag)) {
-                        // These manifest attributes also name reflective runtime entry points.
                         addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "appComponentFactory"),
                                 manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
                         addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "backupAgent"),
@@ -1056,7 +1044,6 @@ public class ProjectBuilder {
                                 manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
                     }
                 } else if ("activity-alias".equals(tag)) {
-                    // android:name on activity-alias is an alias identifier, not a class.
                     addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "targetActivity"),
                             manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
                 }
@@ -1098,8 +1085,7 @@ public class ProjectBuilder {
                     addCompiledApplicationRoot(tag, manifestPackage, compiledClassesDir, roots,
                             layoutFile.getAbsolutePath());
                 }
-                // LayoutInflater's <view class="..."> and fragment android:name attributes are
-                // reflective entry points, so static call-graph analysis cannot discover them.
+
                 if ("view".equals(tag) || "fragment".equals(tag)
                         || "androidx.fragment.app.FragmentContainerView".equals(tag)) {
                     addCompiledApplicationRoot(parser.getAttributeValue(null, "class"), manifestPackage,
@@ -1130,7 +1116,6 @@ public class ProjectBuilder {
             className = candidate;
         }
 
-        // Filter out resource references, placeholders, and malformed XML attribute values.
         if (!className.matches("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*")) return;
         File classFile = new File(compiledClassesDir,
                 className.replace('.', File.separatorChar) + ".class");
@@ -1139,8 +1124,6 @@ public class ProjectBuilder {
             return;
         }
 
-        // A manifest/layout component in the app's own package is expected to have been compiled.
-        // Fail early rather than create an APK that silently lacks its declared entry point.
         String appPackage = yq.packageName == null ? "" : yq.packageName.trim();
         if (!appPackage.isEmpty()
                 && (className.equals(appPackage) || className.startsWith(appPackage + "."))) {
@@ -1172,8 +1155,6 @@ public class ProjectBuilder {
         if (!applicationRoots.isEmpty()) {
             sb.append("\n# Exact app component and XML-inflated class roots. Generated because this is a standalone R8 invocation.\n");
             for (String className : applicationRoots) {
-                // Exact rules only: avoid broad package-wide keep rules that would disable shrinking
-                // for unrelated/unused project classes and dependencies.
                 sb.append("-keep class ").append(className).append(" { *; }\n");
             }
         }
@@ -1326,9 +1307,6 @@ public class ProjectBuilder {
         String customCp = build_settings.getValue(BuildSettings.SETTING_CLASSPATH, "");
         if (!customCp.isEmpty()) libraryJars.addAll(Arrays.asList(customCp.split(":")));
 
-        // Canonicalize and de-duplicate inputs before crossing the service boundary. A path can
-        // be present in both project dependency collections (e.g. custom classpath + selected
-        // library); a program input must not also be presented to R8 as a library input.
         programJars = normalizeR8InputFiles(programJars, "program");
         libraryJars = normalizeR8InputFiles(libraryJars, "library");
         Set<String> programPathSet = new java.util.HashSet<>(programJars);
@@ -1350,8 +1328,6 @@ public class ProjectBuilder {
                 + ", duplicate program/library paths removed=" + libraryOverlapCount
                 + ", expected app roots=" + getApplicationKeepClassesForCurrentBuild().size());
 
-        // Avoid Java native-serialization streams for an arguments file stored in shared storage.
-        // JSON keeps this protocol explicit, inspectable, and resilient across app updates.
         File argsFile = new File(yq.binDirectoryPath, "r8_args.json");
         File argsTempFile = new File(yq.binDirectoryPath, "r8_args.json.tmp");
         JSONObject args = new JSONObject();
@@ -1389,7 +1365,7 @@ public class ProjectBuilder {
             public void onReceive(Context receiverContext, Intent intent) {
                 if (intent == null || !R8Service.ACTION_COMPLETE.equals(intent.getAction())) return;
                 String receivedId = intent.getStringExtra(R8Service.EXTRA_REQUEST_ID);
-                if (!requestId.equals(receivedId)) return; // Ignore stale/overlapping build broadcasts.
+                if (!requestId.equals(receivedId)) return;
                 success[0] = intent.getBooleanExtra(R8Service.EXTRA_SUCCESS, false);
                 error[0] = intent.getStringExtra(R8Service.EXTRA_ERROR);
                 if (!success[0] && (error[0] == null || error[0].trim().isEmpty())) {

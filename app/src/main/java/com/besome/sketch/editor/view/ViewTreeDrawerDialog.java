@@ -156,7 +156,6 @@ public class ViewTreeDrawerDialog extends DialogFragment {
         };
         recyclerView.setLayoutManager(layoutManager);
         recyclerView.setItemViewCacheSize(30);
-        // HasFixedSize must be false because row widths vary drastically based on depth and wrap_content layout
         recyclerView.setHasFixedSize(false);
         
         buildTree();

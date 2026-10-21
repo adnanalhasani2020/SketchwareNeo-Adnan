@@ -767,12 +767,7 @@ public class ViewEditor extends RelativeLayout implements View.OnClickListener, 
                 currentTouchedView instanceof ItemConstraintLayout) {
                 b(true, currentTouchedView instanceof IconCustomWidget);
             } else {
-                // Bug fix: leaf widgets (Button, TextView, ImageView, Switch, etc.)
-                // never called b(), so the delete bar stayed GONE for them.
-                // A GONE view has zero width/height, making hitTestIconDelete always
-                // return false, so D was never set to true, and the ACTION_UP deletion
-                // path was never reached — drag-to-delete was silently broken for
-                // every non-container widget on the canvas.
+
                 b(true, false);
             }
             viewPane.addRootLayout(((ItemView) currentTouchedView).getBean());
@@ -882,7 +877,7 @@ public class ViewEditor extends RelativeLayout implements View.OnClickListener, 
         // Show delete bar
         deleteView.setVisibility(View.VISIBLE);
         deleteView.bringToFront();
-        animateUpDown();           // recreate animators fresh every time
+        animateUpDown();
         isAnimating = true;
         animatorTranslateY.start();
     } else {
