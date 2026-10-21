@@ -1,4 +1,5 @@
 # Manual APK export trigger: rebuild requested by repository owner.
+# Retry APK export requested on 2026-10-22.
 name: Android CI
 
 on:
