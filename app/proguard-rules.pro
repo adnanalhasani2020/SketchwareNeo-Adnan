@@ -19,3 +19,5 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# R8 is invoked by an explicit Android service; keep the manifest entry point stable.
+-keep class mod.pranav.build.R8Service { *; }

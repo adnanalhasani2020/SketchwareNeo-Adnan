@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginVertical="8dp"
-    app:cardBackgroundColor="#1E1E1E"
+    app:cardBackgroundColor="?attr/colorSurfaceContainerHighest"
     app:cardCornerRadius="12dp"
     app:cardElevation="0dp"
     app:strokeWidth="0dp">
@@ -18,7 +18,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#2D2D2D"
+            android:background="?attr/colorSurfaceContainerHigh"
             android:gravity="center_vertical"
             android:paddingHorizontal="12dp"
             android:paddingVertical="6dp">
@@ -30,7 +30,7 @@
                 android:layout_weight="1"
                 android:fontFamily="sans-serif-medium"
                 android:textAppearance="?attr/textAppearanceLabelMedium"
-                android:textColor="#E0E0E0"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 tools:text="java" />
 
             <TextView
@@ -43,7 +43,7 @@
                 android:padding="6dp"
                 android:text="Copy"
                 android:textAppearance="?attr/textAppearanceLabelMedium"
-                android:textColor="#90CAF9" />
+                android:textColor="?attr/colorPrimary" />
         </LinearLayout>
 
         <HorizontalScrollView
@@ -59,7 +59,7 @@
                 android:fontFamily="monospace"
                 android:padding="12dp"
                 android:textAppearance="?attr/textAppearanceBodyMedium"
-                android:textColor="#D4D4D4"
+                android:textColor="?attr/colorOnSurface"
                 android:textIsSelectable="true"
                 tools:text="System.out.println();" />
         </HorizontalScrollView>

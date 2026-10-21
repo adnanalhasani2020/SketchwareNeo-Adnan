@@ -212,26 +212,28 @@ public class LocalProvider implements AiProvider {
     }
 
     private String normalizeEndpoint(String endpoint) {
-        if (TextUtils.isEmpty(endpoint)) {
-            return DEFAULT_ENDPOINT;
-        }
+        if (TextUtils.isEmpty(endpoint)) return DEFAULT_ENDPOINT;
 
         String value = endpoint.trim();
+        while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+        if (value.isEmpty()) return DEFAULT_ENDPOINT;
+        if (value.endsWith("/chat/completions") || value.endsWith("/api/chat")) return value;
+        if (value.endsWith("/v1")) return value + "/chat/completions";
 
-        if (value.endsWith("/")) {
-            value = value.substring(0, value.length() - 1);
-        }
-
-        if (value.endsWith("/v1")) {
-            value += "/chat/completions";
-        } else if (!value.endsWith("/chat/completions") && !value.endsWith("/api/chat")) {
-            // Ollama base URL is the common local case.
-            if (value.endsWith(":11434")) {
-                value += "/api/chat";
+        // Ollama commonly exposes port 11434; other local servers generally expose an
+        // OpenAI-compatible /v1 endpoint. Accept either a server base URL or full endpoint.
+        try {
+            java.net.URL parsed = new java.net.URL(value);
+            if (parsed.getPort() == 11434) {
+                String path = parsed.getPath();
+                if (TextUtils.isEmpty(path) || "/".equals(path)) return value + "/api/chat";
+                if (path.endsWith("/api")) return value + "/chat";
             }
+        } catch (Exception ignored) {
+            // Keep the authored string intact; HttpURLConnection will report malformed URLs
+            // with a user-visible provider error rather than crashing the screen.
         }
-
-        return value;
+        return value + "/v1/chat/completions";
     }
 
     private boolean isOllamaEndpoint(String endpoint) {

@@ -6,6 +6,9 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.os.Handler;
@@ -13,6 +16,7 @@ import android.os.Looper;
 import android.speech.RecognizerIntent;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -46,6 +50,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.noties.markwon.Markwon;
 import neo.sketchware.ai.local.LocalModelManager;
@@ -58,8 +63,6 @@ import pro.sketchware.utility.ThemeUtils;
 
 public class AiSettingsActivity extends BaseAppCompatActivity {
 
-    private static final int PICK_GGUF = 4321;
-
     private ActivityAiSettingsBinding settingsBinding;
     private ActivityLocalModelsBinding localModelsBinding;
     private ActivityAiChatBinding chatBinding;
@@ -70,6 +73,7 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
     private ActivityResultLauncher<Intent> editorLauncher;
     private ActivityResultLauncher<Intent> speechLauncher;
     private ActivityResultLauncher<Intent> filePickerLauncher;
+    private ActivityResultLauncher<Intent> modelPickerLauncher;
 
     private int screen = 0;
     private String chatConfigId = null;
@@ -108,12 +112,50 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         filePickerLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
-                    if (result.getResultCode() == RESULT_OK && result.getData() != null && chatBinding != null) {
-                        String filePath = result.getData().getData().getPath();
-                        String currentText = chatBinding.editMessage.getText().toString();
-                        chatBinding.editMessage.setText(currentText + "\n[Attached: " + new File(filePath).getName() + "]\n");
-                        chatBinding.editMessage.setSelection(chatBinding.editMessage.getText().length());
+                    Intent data = result.getData();
+                    if (result.getResultCode() != RESULT_OK || data == null || data.getData() == null || chatBinding == null) return;
+                    Uri uri = data.getData();
+                    String displayName = getUriDisplayName(uri);
+                    String mime = getContentResolver().getType(uri);
+                    if (isReadableTextAttachment(displayName, mime)) {
+                        new Thread(() -> {
+                            String contents = readTextAttachment(uri);
+                            runOnUiThread(() -> {
+                                if (chatBinding == null) return;
+                                String addition = "\n[Attached text file: " + displayName + "]\n" + contents + "\n[End attachment]\n";
+                                appendToMessageInput(addition);
+                            });
+                        }, "ai-text-attachment").start();
+                    } else {
+                        appendToMessageInput("\n[Attached file: " + displayName + "; binary contents are not embedded]\n");
                     }
+                }
+        );
+
+        modelPickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    Intent data = result.getData();
+                    if (result.getResultCode() != RESULT_OK || data == null || data.getData() == null) return;
+                    Uri uri = data.getData();
+                    String displayName = getUriDisplayName(uri);
+                    new Thread(() -> {
+                        try {
+                            LocalModelManager.importModel(getApplicationContext(), uri, displayName);
+                            runOnUiThread(() -> {
+                                if (localModelsBinding != null) renderLocalList();
+                                Toast.makeText(AiSettingsActivity.this, "GGUF model imported into private storage", Toast.LENGTH_LONG).show();
+                            });
+                        } catch (Exception e) {
+                            String message = e.getMessage() == null ? "Model import failed" : e.getMessage();
+                            runOnUiThread(() -> {
+                                if (isFinishing() || isDestroyed()) return;
+                                new MaterialAlertDialogBuilder(AiSettingsActivity.this)
+                                        .setTitle("Could not import model").setMessage(message)
+                                        .setPositiveButton("OK", null).show();
+                            });
+                        }
+                    }, "ai-model-import").start();
                 }
         );
 
@@ -130,6 +172,7 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
     }
 
     private void showAgents() {
+        releaseChatUi();
         screen = 0;
         settingsBinding = ActivityAiSettingsBinding.inflate(getLayoutInflater());
         setContentView(settingsBinding.getRoot());
@@ -145,6 +188,8 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         settingsBinding.buttonChat.setOnClickListener(v -> showChat(null));
         settingsBinding.buttonLocalModels.setOnClickListener(v -> showLocalModels());
         settingsBinding.buttonTestActive.setOnClickListener(v -> testActive());
+        View workspaceButton = findViewById(R.id.buttonAgentWorkspace);
+        if (workspaceButton != null) workspaceButton.setOnClickListener(v -> startActivity(new Intent(this, AgentWorkspaceActivity.class)));
 
         settingsBinding.tabAll.setOnClickListener(v -> { filter = 0; refreshAgents(); });
         settingsBinding.tabLocal.setOnClickListener(v -> { filter = 1; refreshAgents(); });
@@ -174,7 +219,8 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         settingsBinding.tabCloud.setChecked(filter == 2);
 
         AiModelConfig active = AiManager.getActiveConfig(this);
-        String activeLabel = active == null ? "No active agent" : (active.displayName + " · " + active.modelName);
+        String prefix = active != null && !active.id.equals(AiManager.getActiveConfigId(this)) ? "Preferred local agent: " : "Active agent: ";
+        String activeLabel = active == null ? "No active agent" : (prefix + active.displayName + " · " + active.modelName);
         settingsBinding.textAgentSummary.setText(activeLabel + "\n" + localCount + " local • " + cloudCount + " cloud agents");
         settingsBinding.buttonTestActive.setEnabled(active != null);
     }
@@ -185,29 +231,33 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
     }
 
     private void testAgent(AiModelConfig config) {
-        new MaterialAlertDialogBuilder(this)
+        final androidx.appcompat.app.AlertDialog progressDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle("Testing Connection")
-                .setMessage("Connecting to " + config.displayName + "...")
+                .setMessage("Connecting to " + config.displayName + "…")
                 .setCancelable(false)
                 .show();
 
         AiManager.testConfig(this, config, new AiResponseCallback() {
             @Override
             public void onSuccess(String s) {
-                runOnUiThread(() -> new MaterialAlertDialogBuilder(AiSettingsActivity.this)
-                        .setTitle("Connection Successful")
-                        .setMessage(s)
-                        .setPositiveButton("OK", null)
-                        .show());
+                runOnUiThread(() -> {
+                    if (progressDialog.isShowing()) progressDialog.dismiss();
+                    if (isFinishing() || isDestroyed()) return;
+                    new MaterialAlertDialogBuilder(AiSettingsActivity.this)
+                            .setTitle("Connection successful").setMessage(s)
+                            .setPositiveButton("OK", null).show();
+                });
             }
 
             @Override
             public void onFailure(String e) {
-                runOnUiThread(() -> new MaterialAlertDialogBuilder(AiSettingsActivity.this)
-                        .setTitle("Connection Failed")
-                        .setMessage(e)
-                        .setPositiveButton("OK", null)
-                        .show());
+                runOnUiThread(() -> {
+                    if (progressDialog.isShowing()) progressDialog.dismiss();
+                    if (isFinishing() || isDestroyed()) return;
+                    new MaterialAlertDialogBuilder(AiSettingsActivity.this)
+                            .setTitle("Connection failed").setMessage(e)
+                            .setPositiveButton("OK", null).show();
+                });
             }
         });
     }
@@ -258,7 +308,11 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         }
 
         localModelsBinding.buttonImportGguf.setOnClickListener(v -> pickGguf());
-        localModelsBinding.buttonConnectServer.setOnClickListener(v -> editorLauncher.launch(new Intent(this, AiModelEditActivity.class)));
+        localModelsBinding.buttonConnectServer.setOnClickListener(v -> {
+            Intent intent = new Intent(this, AiModelEditActivity.class);
+            intent.putExtra(AiModelEditActivity.EXTRA_PROVIDER_ID, "local");
+            editorLauncher.launch(intent);
+        });
 
         renderLocalList();
     }
@@ -281,8 +335,11 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
             card.findViewById(R.id.iconStatus).setVisibility(View.GONE);
 
             name.setText(f.getName());
-            desc.setText("Local GGUF File");
-            status.setText((f.length() / 1024 / 1024) + " MB");
+            boolean validGguf = LocalModelManager.isValidGguf(f);
+            desc.setText(validGguf
+                    ? "GGUF header verified · private device storage"
+                    : "Invalid or incomplete GGUF · delete and re-import this file");
+            status.setText((f.length() / 1024 / 1024) + " MB · " + (validGguf ? "runtime required" : "not usable"));
 
             card.findViewById(R.id.buttonMore).setOnClickListener(v -> {
                 PopupMenu popup = new PopupMenu(this, v);
@@ -290,7 +347,13 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
                     new MaterialAlertDialogBuilder(this)
                             .setTitle("Delete model?")
                             .setMessage(f.getName())
-                            .setPositiveButton("Delete", (d, w) -> { f.delete(); renderLocalList(); })
+                            .setPositiveButton("Delete", (d, w) -> {
+                                if (LocalModelManager.delete(AiSettingsActivity.this, f.getName())) {
+                                    renderLocalList();
+                                } else {
+                                    Toast.makeText(AiSettingsActivity.this, "Could not delete this model file.", Toast.LENGTH_LONG).show();
+                                }
+                            })
                             .setNegativeButton("Cancel", null)
                             .show();
                     return true;
@@ -304,11 +367,14 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
     private void pickGguf() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("application/octet-stream");
-        startActivityForResult(i, PICK_GGUF);
+        i.setType("*/*");
+        String[] types = {"application/octet-stream", "application/x-gguf", "application/x-binary"};
+        i.putExtra(Intent.EXTRA_MIME_TYPES, types);
+        modelPickerLauncher.launch(i);
     }
 
     private void showChat(String explicitConfigId) {
+        releaseChatUi();
         screen = 2;
         chatBinding = ActivityAiChatBinding.inflate(getLayoutInflater());
         setContentView(chatBinding.getRoot());
@@ -318,17 +384,20 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         }
 
         chatBinding.buttonClear.setOnClickListener(v -> {
+            if (activeRequestId != null) markRequestCancelled(activeRequestId);
+            activeRequestId = null;
             currentChatMessages.clear();
             saveChatHistory();
             chatAdapter.notifyDataSetChanged();
-            activeRequestId = null;
             updateInputState();
         });
 
         if (explicitConfigId != null) {
             chatConfigId = explicitConfigId;
-        } else if (chatConfigId == null) {
-            chatConfigId = AiManager.getActiveConfigId(this);
+        } else {
+            // General Chat targets the preferred active agent; a previous per-card choice must not leak.
+            AiModelConfig preferred = AiManager.getActiveConfig(this);
+            chatConfigId = preferred == null ? AiManager.getActiveConfigId(this) : preferred.id;
         }
 
         AiModelConfig config = null;
@@ -379,6 +448,127 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         chatBinding.chipExplain.setOnClickListener(v -> chatBinding.editMessage.setText("Explain this code:\n"));
     }
 
+    private void appendToMessageInput(String addition) {
+        if (chatBinding == null || addition == null) return;
+        String current = chatBinding.editMessage.getText().toString();
+        chatBinding.editMessage.setText(current + addition);
+        chatBinding.editMessage.setSelection(chatBinding.editMessage.getText().length());
+    }
+
+    private String cancelledMessageContent(String requestId, String reason) {
+        String existing = "";
+        for (int i = currentChatMessages.size() - 1; i >= 0; i--) {
+            ChatMessage message = currentChatMessages.get(i);
+            if (message != null && requestId.equals(message.id)) {
+                existing = message.content == null || "Thinking…".equals(message.content) ? "" : message.content.trim();
+                break;
+            }
+        }
+        return (existing.isEmpty() ? "" : existing + "\n\n") + "*[" + reason + "]*";
+    }
+
+    private void markRequestCancelled(String requestId) {
+        if (requestId == null || requestId.isEmpty()) return;
+        cancelledRequests.add(requestId);
+        // Bound stale markers if a provider never returns its terminal callback.
+        while (cancelledRequests.size() > 128) {
+            java.util.Iterator<String> iterator = cancelledRequests.iterator();
+            if (!iterator.hasNext()) break;
+            iterator.next();
+            iterator.remove();
+        }
+    }
+
+    private void releaseChatUi() {
+        if (activeRequestId != null) {
+            String requestId = activeRequestId;
+            markRequestCancelled(requestId);
+            // Save the in-flight user message and a clear terminal status before detaching views.
+            updateAiMessage(requestId, cancelledMessageContent(requestId, "Generation stopped when leaving chat."), false, true);
+            activeRequestId = null;
+        }
+        for (Runnable pending : pendingUiUpdates.values()) {
+            mainHandler.removeCallbacks(pending);
+        }
+        pendingUiUpdates.clear();
+        if (chatBinding != null) {
+            try { chatBinding.recyclerChat.setAdapter(null); } catch (Exception ignored) { }
+        }
+        chatBinding = null;
+        chatAdapter = null;
+    }
+
+    @Override
+    public void onDestroy() {
+        releaseChatUi();
+        mainHandler.removeCallbacksAndMessages(null);
+        settingsBinding = null;
+        localModelsBinding = null;
+        super.onDestroy();
+    }
+
+    private String getUriDisplayName(Uri uri) {
+        if (uri == null) return "attachment";
+        try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    String value = cursor.getString(index);
+                    if (value != null && !value.trim().isEmpty()) return value.replaceAll("[\\r\\n]", "_");
+                }
+            }
+        } catch (Exception ignored) { }
+        String last = uri.getLastPathSegment();
+        return last == null ? "attachment" : last;
+    }
+
+    private boolean isReadableTextAttachment(String name, String mime) {
+        if (mime != null && (mime.startsWith("text/") || mime.equals("application/json") || mime.equals("application/xml"))) return true;
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".java") || lower.endsWith(".kt") ||
+                lower.endsWith(".xml") || lower.endsWith(".json") || lower.endsWith(".gradle") || lower.endsWith(".properties") || lower.endsWith(".log");
+    }
+
+    private String readTextAttachment(Uri uri) {
+        final int maxBytes = 96 * 1024;
+        try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            if (in == null) return "[Attachment could not be opened.]";
+            byte[] buffer = new byte[8192];
+            int remaining = maxBytes;
+            int n;
+            while (remaining > 0 && (n = in.read(buffer, 0, Math.min(buffer.length, remaining))) != -1) {
+                out.write(buffer, 0, n);
+                remaining -= n;
+            }
+            String text = new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+            if (remaining == 0) text += "\n[Attachment truncated at 96 KB.]";
+            return text;
+        } catch (Exception e) {
+            return "[Could not read attachment: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()) + "]";
+        }
+    }
+
+    private String buildConversationPrompt(String currentPrompt) {
+        StringBuilder prompt = new StringBuilder();
+        int placeholderIndex = currentChatMessages.size() - 1;
+        int currentUserIndex = currentChatMessages.size() - 2;
+        int end = Math.min(currentUserIndex - 1, placeholderIndex - 2);
+        int start = Math.max(0, end - 9);
+        boolean hasHistory = false;
+        for (int i = start; i <= end; i++) {
+            ChatMessage message = currentChatMessages.get(i);
+            if (message == null || message.isError || message.isStreaming || message.content == null || message.content.trim().isEmpty()) continue;
+            prompt.append("You".equals(message.role) ? "User: " : "Assistant: ")
+                    .append(message.content).append("\n\n");
+            hasHistory = true;
+        }
+        if (hasHistory) prompt.insert(0, "Recent conversation history (oldest first):\n");
+        prompt.append("Current user message:\n").append(currentPrompt);
+        return prompt.toString();
+    }
+
     private void updateInputState() {
         if (chatBinding == null) return;
         boolean hasText = chatBinding.editMessage.getText().toString().trim().length() > 0;
@@ -397,8 +587,9 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
 
     private void handleSendOrStop() {
         if (activeRequestId != null) {
-            cancelledRequests.add(activeRequestId);
-            updateAiMessage(activeRequestId, "\n\n*[Generation Stopped]*", false, true);
+            String requestId = activeRequestId;
+            markRequestCancelled(requestId);
+            updateAiMessage(requestId, cancelledMessageContent(requestId, "Generation stopped."), false, true);
             activeRequestId = null;
             updateInputState();
             return;
@@ -428,48 +619,79 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         chatAdapter.notifyItemInserted(currentChatMessages.size() - 1);
         scrollToBottom(true);
 
-        AiManager.sendPrompt(this, "You are the Sketchware Neo AI assistant. Answer using Markdown formatting.", userPrompt, new AiResponseCallback() {
-            @Override
-            public void onStart(String id) {
-                // Future stream support starts here
+        AiModelConfig selectedConfig = null;
+        for (AiModelConfig configured : AiManager.getConfigs(this)) {
+            if (configured != null && chatConfigId != null && chatConfigId.equals(configured.id)) {
+                selectedConfig = configured;
+                break;
             }
+        }
+        final AiModelConfig requestConfig = selectedConfig;
+        String promptWithContext = buildConversationPrompt(userPrompt);
+        AtomicBoolean terminalDelivered = new AtomicBoolean(false);
+        AiManager.sendPrompt(this, requestConfig, "You are the Sketchware Neo AI assistant. Answer using Markdown formatting. " +
+                "Use the supplied conversation history for continuity, but treat the latest user message as the current request.", promptWithContext, new AiResponseCallback() {
+            @Override public void onStart(String id) { /* Provider may add progress/streaming in the future. */ }
 
             @Override
             public void onChunk(String id, String chunk) {
-                if (cancelledRequests.contains(reqId)) return;
-                updateAiMessage(reqId, chunk, true, false);
+                if (terminalDelivered.get()) return;
+                mainHandler.post(() -> {
+                    if (!terminalDelivered.get() && !cancelledRequests.contains(reqId) && screen == 2) {
+                        appendAiMessageChunk(reqId, chunk);
+                    }
+                });
             }
 
             @Override
             public void onComplete(String id, String fullText) {
-                if (cancelledRequests.contains(reqId)) return;
-                updateAiMessage(reqId, fullText, false, false);
-                finalizeRequest(reqId);
+                mainHandler.post(() -> {
+                    if (!terminalDelivered.compareAndSet(false, true)) return;
+                    if (cancelledRequests.remove(reqId)) return;
+                    updateAiMessage(reqId, fullText, false, false);
+                    finalizeRequest(reqId);
+                });
             }
 
             @Override
             public void onError(String id, String err) {
-                if (cancelledRequests.contains(reqId)) return;
-                updateAiMessage(reqId, "Error: " + err, false, true);
-                finalizeRequest(reqId);
+                mainHandler.post(() -> {
+                    if (!terminalDelivered.compareAndSet(false, true)) return;
+                    if (cancelledRequests.remove(reqId)) return;
+                    updateAiMessage(reqId, "Error: " + (err == null ? "Unknown AI error" : err), false, true);
+                    finalizeRequest(reqId);
+                });
             }
 
-            @Override
-            public void onSuccess(String s) {
-                onComplete(reqId, s);
-            }
-
-            @Override
-            public void onFailure(String e) {
-                onError(reqId, e);
-            }
+            @Override public void onSuccess(String s) { onComplete(reqId, s); }
+            @Override public void onFailure(String e) { onError(reqId, e); }
         });
+    }
+
+    private void appendAiMessageChunk(String messageId, String chunk) {
+        if (chunk == null || chunk.isEmpty()) return;
+        for (int i = currentChatMessages.size() - 1; i >= 0; i--) {
+            ChatMessage message = currentChatMessages.get(i);
+            if (!message.id.equals(messageId)) continue;
+            if (message.content == null || "Thinking…".equals(message.content)) message.content = "";
+            message.content += chunk;
+            message.isStreaming = true;
+            final int index = i;
+            mainHandler.post(() -> {
+                if (chatAdapter != null && index < currentChatMessages.size() && !isDestroyed()) {
+                    chatAdapter.notifyItemChanged(index);
+                    scrollToBottom(false);
+                }
+            });
+            return;
+        }
     }
 
     private void updateAiMessage(String messageId, String newContent, boolean isStreaming, boolean isError) {
         int idx = -1;
         for (int i = currentChatMessages.size() - 1; i >= 0; i--) {
-            if (currentChatMessages.get(i).id.equals(messageId)) {
+            ChatMessage message = currentChatMessages.get(i);
+            if (message != null && messageId.equals(message.id)) {
                 idx = i;
                 break;
             }
@@ -477,30 +699,32 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         if (idx == -1) return;
 
         ChatMessage msg = currentChatMessages.get(idx);
-        msg.content = newContent;
+        msg.content = newContent == null ? "" : newContent;
         msg.isStreaming = isStreaming;
         msg.isError = isError;
-
         final int finalIdx = idx;
-        
+
+        Runnable pending = pendingUiUpdates.remove(messageId);
+        if (pending != null) mainHandler.removeCallbacks(pending);
         Runnable updateTask = () -> {
-            chatAdapter.notifyItemChanged(finalIdx);
-            scrollToBottom(false);
+            if (chatBinding != null && chatAdapter != null && screen == 2 &&
+                    !isFinishing() && !isDestroyed() && finalIdx < currentChatMessages.size()) {
+                chatAdapter.notifyItemChanged(finalIdx);
+                scrollToBottom(false);
+            }
             if (!isStreaming) saveChatHistory();
         };
 
         if (!isStreaming) {
-            mainHandler.removeCallbacksAndMessages(messageId);
-            runOnUiThread(updateTask);
-        } else {
-            Runnable existing = pendingUiUpdates.get(messageId);
-            if (existing == null) {
-                pendingUiUpdates.put(messageId, updateTask);
-                mainHandler.postDelayed(() -> {
-                    pendingUiUpdates.remove(messageId);
-                    if (!isDestroyed()) runOnUiThread(updateTask);
-                }, 100);
-            }
+            if (Looper.myLooper() == Looper.getMainLooper()) updateTask.run();
+            else mainHandler.post(updateTask);
+        } else if (!pendingUiUpdates.containsKey(messageId)) {
+            Runnable delayedUpdate = () -> {
+                pendingUiUpdates.remove(messageId);
+                if (!isDestroyed()) updateTask.run();
+            };
+            pendingUiUpdates.put(messageId, delayedUpdate);
+            mainHandler.postDelayed(delayedUpdate, 100L);
         }
     }
 
@@ -512,7 +736,7 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
     }
 
     private void scrollToBottom(boolean force) {
-        if (chatBinding == null || chatAdapter.getItemCount() == 0) return;
+        if (chatBinding == null || chatAdapter == null || screen != 2 || chatAdapter.getItemCount() == 0) return;
         LinearLayoutManager lm = (LinearLayoutManager) chatBinding.recyclerChat.getLayoutManager();
         if (lm != null) {
             int lastVisible = lm.findLastVisibleItemPosition();
@@ -534,8 +758,21 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
             SharedPreferences prefs = getSharedPreferences("ai_chat_history", MODE_PRIVATE);
             String json = prefs.getString("chat_" + chatConfigId, null);
             if (json != null) {
-                List<ChatMessage> list = new Gson().fromJson(json, new TypeToken<ArrayList<ChatMessage>>(){}.getType());
-                if (list != null) currentChatMessages.addAll(list);
+                try {
+                    List<ChatMessage> list = new Gson().fromJson(json, new TypeToken<ArrayList<ChatMessage>>(){}.getType());
+                    if (list != null) {
+                        for (ChatMessage message : list) {
+                            if (message == null) continue;
+                            if (message.id == null) message.id = UUID.randomUUID().toString();
+                            if (message.role == null) message.role = "AI";
+                            if (message.content == null) message.content = "";
+                            currentChatMessages.add(message);
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    currentChatMessages.clear();
+                    getSharedPreferences("ai_chat_history", MODE_PRIVATE).edit().remove("chat_" + chatConfigId).apply();
+                }
             }
         }
         if (currentChatMessages.isEmpty()) {
@@ -575,15 +812,17 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull ChatVH holder, int position) {
             ChatMessage msg = currentChatMessages.get(position);
-            holder.textSender.setText(msg.role);
+            holder.textSender.setText(msg.role == null ? "AI" : msg.role);
 
-            boolean isUser = msg.role.equals("You");
+            boolean isUser = "You".equals(msg.role);
+            holder.messageRoot.setGravity(isUser ? Gravity.END : Gravity.START);
+            holder.textSender.setGravity(isUser ? Gravity.END : Gravity.START);
             holder.cardBubble.setCardBackgroundColor(ThemeUtils.getColor(AiSettingsActivity.this, isUser ? R.attr.colorSurfaceContainerHigh : R.attr.colorSurfaceContainerLow));
             holder.textSender.setTextColor(ThemeUtils.getColor(AiSettingsActivity.this, isUser ? R.attr.colorPrimary : R.attr.colorOnSurfaceVariant));
 
             holder.layoutContent.removeAllViews();
 
-            if (msg.isStreaming && msg.content.equals("Thinking…")) {
+            if (msg.isStreaming && "Thinking…".equals(msg.content)) {
                 TextView tv = new TextView(AiSettingsActivity.this);
                 tv.setText(msg.content);
                 tv.setTextColor(ThemeUtils.getColor(AiSettingsActivity.this, R.attr.colorOnSurfaceVariant));
@@ -638,7 +877,7 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
                 if (!isUser && !msg.isStreaming) {
                     popup.getMenu().add("Regenerate").setOnMenuItemClickListener(item -> {
                         for (int i = position - 1; i >= 0; i--) {
-                            if (currentChatMessages.get(i).role.equals("You")) {
+                            if ("You".equals(currentChatMessages.get(i).role)) {
                                 String userText = currentChatMessages.get(i).content;
                                 invokeAi(userText);
                                 break;
@@ -655,11 +894,13 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
         @Override public int getItemCount() { return currentChatMessages.size(); }
 
         class ChatVH extends RecyclerView.ViewHolder {
+            LinearLayout messageRoot;
             TextView textSender;
             MaterialCardView cardBubble;
             LinearLayout layoutContent;
             ChatVH(View v) {
                 super(v);
+                messageRoot = v.findViewById(R.id.layoutMessageRoot);
                 textSender = v.findViewById(R.id.textSenderName);
                 cardBubble = v.findViewById(R.id.cardMessageBubble);
                 layoutContent = v.findViewById(R.id.layoutContent);
@@ -702,7 +943,8 @@ public class AiSettingsActivity extends BaseAppCompatActivity {
             holder.cardRoot.setStrokeColor(ColorStateList.valueOf(ThemeUtils.getColor(AiSettingsActivity.this, isActive ? R.attr.colorPrimary : R.attr.colorOutlineVariant)));
             holder.cardRoot.setStrokeWidth(isActive ? SketchwareUtil.dpToPx(2) : SketchwareUtil.dpToPx(1));
 
-            holder.textStatus.setText("Ready • " + (p != null && p.isLocal() ? "LOCAL" : "CLOUD"));
+            holder.textStatus.setText((p != null && p.isLocal() ? "LOCAL SERVER" : "CLOUD PROVIDER") + " • configured");
+            holder.cardRoot.setOnClickListener(v -> activity.showChat(c.id));
 
             holder.buttonMore.setOnClickListener(v -> {
                 PopupMenu popup = new PopupMenu(AiSettingsActivity.this, v);

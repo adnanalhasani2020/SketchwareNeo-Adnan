@@ -93,8 +93,18 @@ public final class AiManager {
         String json = decrypt(getPrefs(context).getString(KEY_CONFIGS, null));
         if (json == null) return new ArrayList<>();
         Type listType = new TypeToken<ArrayList<AiModelConfig>>() {}.getType();
-        List<AiModelConfig> configs = getGson().fromJson(json, listType);
-        return configs != null ? configs : new ArrayList<>();
+        try {
+            List<AiModelConfig> configs = getGson().fromJson(json, listType);
+            if (configs == null) return new ArrayList<>();
+            List<AiModelConfig> safe = new ArrayList<>();
+            for (AiModelConfig config : configs) {
+                if (config != null && config.id != null && config.providerId != null) safe.add(config);
+            }
+            return safe;
+        } catch (RuntimeException e) {
+            // A damaged preference must not crash the AI screens; retain the raw value for diagnosis.
+            return new ArrayList<>();
+        }
     }
 
     private static void saveConfigs(Context context, List<AiModelConfig> configs) {
@@ -102,23 +112,32 @@ public final class AiManager {
     }
 
     public static void addConfig(Context context, AiModelConfig config) {
+        if (context == null || config == null || config.providerId == null || config.id == null) return;
         List<AiModelConfig> configs = getConfigs(context);
+        for (AiModelConfig item : configs) if (config.id.equals(item.id)) return;
+        boolean wasEmpty = configs.isEmpty();
         configs.add(config);
         saveConfigs(context, configs);
-        if (configs.size() == 1) setActiveConfigId(context, config.id);
+        if (wasEmpty) setActiveConfigId(context, config.id);
     }
 
     public static void updateConfig(Context context, AiModelConfig updated) {
         List<AiModelConfig> configs = getConfigs(context);
+        if (updated == null || updated.id == null || updated.providerId == null) return;
         for (int i = 0; i < configs.size(); i++) {
-            if (configs.get(i).id.equals(updated.id)) { configs.set(i, updated); break; }
+            if (updated.id.equals(configs.get(i).id)) {
+                configs.set(i, updated);
+                saveConfigs(context, configs);
+                return;
+            }
         }
+        configs.add(updated);
         saveConfigs(context, configs);
     }
 
     public static void removeConfig(Context context, String id) {
         List<AiModelConfig> configs = getConfigs(context);
-        configs.removeIf(c -> c.id.equals(id));
+        configs.removeIf(c -> c != null && id != null && id.equals(c.id));
         saveConfigs(context, configs);
         if (id != null && id.equals(getActiveConfigId(context))) {
             getPrefs(context).edit().remove(KEY_ACTIVE_ID).apply();
@@ -135,11 +154,40 @@ public final class AiManager {
         else getPrefs(context).edit().putString(KEY_ACTIVE_ID, encrypt(id)).apply();
     }
 
+    /**
+     * Returns the user's active agent, or a configured local agent when the explicit
+     * "prefer local" setting is enabled and a usable local configuration exists.
+     * The explicitly selected ID remains unchanged, so users can turn this preference off
+     * without losing their chosen default.
+     */
     public static AiModelConfig getActiveConfig(Context context) {
+        if (context == null) return null;
+        List<AiModelConfig> configs = getConfigs(context);
         String activeId = getActiveConfigId(context);
-        if (activeId == null) return null;
-        for (AiModelConfig c : getConfigs(context)) if (activeId.equals(c.id)) return c;
-        return null;
+        AiModelConfig selected = null;
+        for (AiModelConfig c : configs) {
+            if (c != null && activeId != null && activeId.equals(c.id)) {
+                selected = c;
+                break;
+            }
+        }
+
+        boolean preferLocal = getPrefs(context).getBoolean("prefer_local", false);
+        if (preferLocal && (selected == null || !isLocalConfig(selected))) {
+            for (AiModelConfig candidate : configs) {
+                if (candidate != null && isLocalConfig(candidate) &&
+                        candidate.modelName != null && !candidate.modelName.trim().isEmpty()) {
+                    return candidate;
+                }
+            }
+        }
+        return selected;
+    }
+
+    private static boolean isLocalConfig(AiModelConfig config) {
+        if (config == null || config.providerId == null) return false;
+        AiProvider provider = AiProviderRegistry.get(config.providerId);
+        return provider != null && provider.isLocal();
     }
 
     public static AiProvider getActiveProvider(Context context) {
@@ -158,13 +206,31 @@ public final class AiManager {
         testConfig(context, getActiveConfig(context), callback);
     }
 
+    /** Entry point used by existing block/layout/error-generation features. */
     public static void sendPrompt(Context context, String systemPrompt, String userPrompt, AiResponseCallback callback) {
-        AiModelConfig active = getActiveConfig(context);
-        if (active == null) { callback.onFailure("No active AI model configured. Add one from AI Agents."); return; }
-        AiProvider provider = AiProviderRegistry.get(active.providerId);
-        if (provider == null) { callback.onFailure("Unknown AI provider: " + active.providerId); return; }
-        String agentPrompt = active.systemPrompt == null ? "" : active.systemPrompt.trim();
-        String mergedSystem = agentPrompt.isEmpty() ? systemPrompt : agentPrompt + "\n\n" + systemPrompt;
-        provider.sendRequest(active, mergedSystem, userPrompt, callback);
+        if (callback == null) return;
+        if (context == null) {
+            callback.onFailure("AI context is unavailable.");
+            return;
+        }
+        if (!getPrefs(context).getBoolean("auto_agent", true)) {
+            callback.onFailure("AI integrations are disabled. Enable ‘Use active agent for existing AI generation’ in AI Settings.");
+            return;
+        }
+        sendPrompt(context, getActiveConfig(context), systemPrompt, userPrompt, callback);
+    }
+
+    /** Sends a request through the explicitly selected agent rather than silently using the active one. */
+    public static void sendPrompt(Context context, AiModelConfig config, String systemPrompt,
+                                  String userPrompt, AiResponseCallback callback) {
+        if (callback == null) return;
+        if (config == null) { callback.onFailure("No AI agent selected. Add or select an agent from AI Agents."); return; }
+        AiProvider provider = AiProviderRegistry.get(config.providerId);
+        if (provider == null) { callback.onFailure("Unknown AI provider: " + config.providerId); return; }
+        if (userPrompt == null || userPrompt.trim().isEmpty()) { callback.onFailure("Enter a message to send."); return; }
+        String agentPrompt = config.systemPrompt == null ? "" : config.systemPrompt.trim();
+        String basePrompt = systemPrompt == null ? "" : systemPrompt.trim();
+        String mergedSystem = agentPrompt.isEmpty() ? basePrompt : (basePrompt.isEmpty() ? agentPrompt : agentPrompt + "\n\n" + basePrompt);
+        provider.sendRequest(config, mergedSystem, userPrompt, callback);
     }
 }

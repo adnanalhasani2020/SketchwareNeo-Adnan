@@ -11,6 +11,7 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -347,6 +348,9 @@
             android:configChanges="orientation|screenSize" />
 
         <activity
+            android:name="pro.sketchware.analysis.ui.ProjectInspectorActivity" />
+
+        <activity
             android:name="com.besome.sketch.editor.manage.library.material3.Material3LibraryActivity"
             android:configChanges="orientation|screenSize" />
 
@@ -402,6 +406,10 @@
         <activity
             android:name="neo.sketchware.ai.AiSettingsActivity"
             android:configChanges="orientation|screenSize" />
+        <activity
+            android:name="neo.sketchware.ai.AgentWorkspaceActivity"
+            android:configChanges="orientation|screenSize"
+            android:windowSoftInputMode="adjustResize|stateHidden" />
         <activity
             android:name="neo.sketchware.ai.AiModelEditActivity"
             android:configChanges="orientation|screenSize" />

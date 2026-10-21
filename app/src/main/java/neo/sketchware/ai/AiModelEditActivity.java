@@ -19,6 +19,7 @@ import pro.sketchware.databinding.ActivityAiModelEditBinding;
 
 public class AiModelEditActivity extends BaseAppCompatActivity {
     public static final String EXTRA_CONFIG = "config";
+    public static final String EXTRA_PROVIDER_ID = "provider_id";
 
     private ActivityAiModelEditBinding binding;
 
@@ -81,6 +82,9 @@ public class AiModelEditActivity extends BaseAppCompatActivity {
             }
         } else {
             binding.editMaxTokens.setText("4096");
+            String requestedProvider = getIntent().getStringExtra(EXTRA_PROVIDER_ID);
+            int requestedIndex = providerIds.indexOf(requestedProvider);
+            if (requestedIndex >= 0) initial = requestedIndex;
         }
 
         if (!providerIds.isEmpty()) {

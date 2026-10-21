@@ -58,7 +58,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Import GGUF files into Neo's private storage, or connect an Ollama / OpenAI-compatible server."
+                        android:text="Import GGUF files into Neo's private storage, or connect an Ollama / OpenAI-compatible server. Imported files are not executed on-device by themselves; a compatible inference runtime is required."
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="?attr/colorOnSurfaceVariant" />
 

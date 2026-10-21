@@ -12,10 +12,12 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.StrictMode;
+import android.os.SystemClock;
 import android.system.Os;
 import android.text.TextUtils;
 import android.text.format.Formatter;
 import android.util.Log;
+import android.util.Xml;
 import android.widget.Toast;
 
 import com.android.sdklib.build.ApkBuilder;
@@ -28,6 +30,11 @@ import com.iyxan23.zipalignjava.InvalidZipException;
 import com.iyxan23.zipalignjava.ZipAlign;
 
 import org.xml.sax.SAXException;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -37,6 +44,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.RandomAccessFile;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 import java.lang.reflect.Method;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
@@ -45,7 +57,11 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import mod.agus.jcoderz.dex.Dex;
@@ -70,6 +86,7 @@ import mod.jbk.build.compiler.resource.ResourceCompiler;
 import mod.jbk.util.LogUtil;
 import mod.jbk.util.TestkeySignBridge;
 import mod.pranav.build.JarBuilder;
+import mod.pranav.build.R8Service;
 import mod.pranav.viewbinding.ViewBindingBuilder;
 import pro.sketchware.SketchApplication;
 import pro.sketchware.util.library.BuiltInLibraryManager;
@@ -100,9 +117,12 @@ public class ProjectBuilder {
     private BuildProgressReceiver progressReceiver;
     private boolean buildAppBundle = false;
     private ArrayList<File> dexesToAddButNotMerge = new ArrayList<>();
-    private boolean isMultiDexEnabled = false;
-    // Per-build fallback only: leave the user's R8 preference untouched for the next build.
-    private boolean useProguardFallbackForCurrentBuild = false; 
+    private boolean isMultiDexEnabled = false; 
+    // Per-build fallback only; never overwrite the user's persisted R8 setting.
+    private boolean useProguardFallbackForCurrentBuild = false;
+    // Lazily derived from the final project manifest and layout XML. This list is reused for
+    // both keep-rule generation and post-R8 output verification so the two cannot drift apart.
+    private ArrayList<String> cachedApplicationKeepClassesForCurrentBuild;
 
     private long timestampResourceCompilationStarted;
 
@@ -260,17 +280,39 @@ public class ProjectBuilder {
 
     public void createDexFilesFromClasses() throws Exception {
         File dexOutputDir = new File(yq.binDirectoryPath, "dex");
-        if (dexOutputDir.exists()) {
-            File[] staleDexFiles = dexOutputDir.listFiles((dir, name) -> name.endsWith(".dex"));
-            if (staleDexFiles != null) {
-                for (File staleDexFile : staleDexFiles) {
-                    staleDexFile.delete();
+
+        // runR8() has already written the final DEX files into this directory. Do not run the
+        // ordinary D8/Dx cleanup on the R8 path: deleting classes*.dex here caused successful
+        // R8 runs to leave only META-INF entries, so the APK silently lost the app's classes.
+        if (isR8ActiveForCurrentBuild()) {
+            File[] r8DexFiles = dexOutputDir.listFiles(
+                    (dir, name) -> name.matches("classes([0-9]+)?\\.dex"));
+            if (r8DexFiles == null || r8DexFiles.length == 0) {
+                throw new IOException("R8 was reported successful, but no classes*.dex files exist in "
+                        + dexOutputDir.getAbsolutePath() + ". The build is stopped instead of packaging an APK without application bytecode.");
+            }
+            for (File dexFile : r8DexFiles) {
+                if (!dexFile.isFile() || dexFile.length() == 0L) {
+                    throw new IOException("R8 produced an empty or invalid DEX output: " + dexFile.getAbsolutePath());
                 }
             }
-        } else {
-            dexOutputDir.mkdirs();
+            return;
         }
-        if (isR8ActiveForCurrentBuild()) return;
+
+        // Only the non-R8 D8/Dx path should clean previous DEX outputs before recompiling.
+        if (dexOutputDir.exists()) {
+            File[] staleDexFiles = dexOutputDir.listFiles((dir, name) -> name.matches("classes([0-9]+)?\\.dex"));
+            if (staleDexFiles != null) {
+                for (File staleDexFile : staleDexFiles) {
+                    if (!staleDexFile.delete() && staleDexFile.exists()) {
+                        throw new IOException("Could not remove stale DEX output before D8/Dx compilation: "
+                                + staleDexFile.getAbsolutePath());
+                    }
+                }
+            }
+        } else if (!dexOutputDir.mkdirs() && !dexOutputDir.isDirectory()) {
+            throw new IOException("Could not create DEX output directory: " + dexOutputDir.getAbsolutePath());
+        }
 
         if (isD8Enabled()) {
             long savedTimeMillis = System.currentTimeMillis();
@@ -858,13 +900,203 @@ public class ProjectBuilder {
         }
     }
 
-    private void proguardAddRjavaRules(List<String> args) {
+    private void proguardAddRjavaRules(List<String> args) throws IOException {
+        File generatedRules = new File(yq.proguardAutoGeneratedExclusions);
+        File parent = generatedRules.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
+            throw new IOException("Could not create generated ProGuard rules directory: " + parent.getAbsolutePath());
+        }
         FileUtil.writeFile(yq.proguardAutoGeneratedExclusions, getRJavaRules());
+        if (!generatedRules.isFile() || generatedRules.length() == 0L) {
+            throw new IOException("Generated ProGuard rules file is missing or empty: " + generatedRules.getAbsolutePath());
+        }
         args.add("-include");
-        args.add(yq.proguardAutoGeneratedExclusions);
+        args.add(generatedRules.getAbsolutePath());
     }
 
-    private String getRJavaRules() {
+    /**
+     * Returns app entry-point and XML-inflated custom classes which must be roots for the
+     * standalone R8 invocation. Unlike the Android Gradle Plugin, this custom build path does
+     * not receive AAPT2's manifest-derived keep rules automatically. Without these exact roots,
+     * R8 can successfully shrink a project down to only META-INF and silently remove its Activity.
+     */
+    private ArrayList<String> getApplicationKeepClassesForCurrentBuild() throws IOException {
+        if (cachedApplicationKeepClassesForCurrentBuild != null) {
+            return new ArrayList<>(cachedApplicationKeepClassesForCurrentBuild);
+        }
+
+        File compiledClassesDir = new File(yq.compiledClassesPath);
+        File manifestFile = new File(yq.androidManifestPath);
+        if (!manifestFile.isFile() || manifestFile.length() == 0L) {
+            throw new IOException("Cannot build R8 keep rules: project AndroidManifest.xml is missing or empty: "
+                    + manifestFile.getAbsolutePath());
+        }
+
+        LinkedHashSet<String> roots = new LinkedHashSet<>();
+        String[] manifestPackage = new String[] { yq.packageName };
+        collectManifestEntryClasses(manifestFile, compiledClassesDir, manifestPackage, roots);
+
+        // Include qualifiers such as layout-land/, layout-sw600dp/, and layout-v21/ as well
+        // as the base layout/ folder. A custom view may exist only in a qualified layout.
+        File resourceDirectory = new File(yq.resDirectoryPath);
+        File[] resourceEntries = resourceDirectory.listFiles();
+        if (resourceEntries != null) {
+            for (File resourceEntry : resourceEntries) {
+                String resourceName = resourceEntry.getName();
+                if (resourceEntry.isDirectory()
+                        && ("layout".equals(resourceName) || resourceName.startsWith("layout-"))) {
+                    collectLayoutInflatedClasses(resourceEntry, compiledClassesDir, manifestPackage[0], roots);
+                }
+            }
+        } else if (resourceDirectory.exists()) {
+            throw new IOException("Cannot list project resource directory while generating R8 keep rules: "
+                    + resourceDirectory.getAbsolutePath());
+        }
+
+        cachedApplicationKeepClassesForCurrentBuild = new ArrayList<>(roots);
+        LogUtil.d(TAG, "R8 app roots discovered from manifest/layout XML: " + roots.size()
+                + (roots.isEmpty() ? " (no compiled local component roots detected)" : ": " + roots));
+        return new ArrayList<>(cachedApplicationKeepClassesForCurrentBuild);
+    }
+
+    private void collectManifestEntryClasses(File manifestFile, File compiledClassesDir,
+                                             String[] manifestPackage, Set<String> roots) throws IOException {
+        final String androidNamespace = "http://schemas.android.com/apk/res/android";
+        try (FileInputStream input = new FileInputStream(manifestFile)) {
+            XmlPullParser parser = Xml.newPullParser();
+            parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true);
+            parser.setInput(input, StandardCharsets.UTF_8.name());
+            int event;
+            while ((event = parser.next()) != XmlPullParser.END_DOCUMENT) {
+                if (event != XmlPullParser.START_TAG) continue;
+                String tag = parser.getName();
+                if ("manifest".equals(tag)) {
+                    String declaredPackage = parser.getAttributeValue(null, "package");
+                    if (declaredPackage != null && !declaredPackage.trim().isEmpty()
+                            && declaredPackage.indexOf('$') < 0) {
+                        manifestPackage[0] = declaredPackage.trim();
+                    }
+                    continue;
+                }
+
+                boolean applicationComponent = "application".equals(tag)
+                        || "activity".equals(tag)
+                        || "service".equals(tag)
+                        || "receiver".equals(tag)
+                        || "provider".equals(tag)
+                        || "instrumentation".equals(tag);
+                if (applicationComponent) {
+                    addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "name"),
+                            manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
+                    if ("activity".equals(tag)) {
+                        addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "parentActivityName"),
+                                manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
+                    }
+                    if ("application".equals(tag)) {
+                        // These manifest attributes also name reflective runtime entry points.
+                        addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "appComponentFactory"),
+                                manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
+                        addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "backupAgent"),
+                                manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
+                        addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "manageSpaceActivity"),
+                                manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
+                    }
+                } else if ("activity-alias".equals(tag)) {
+                    // android:name on activity-alias is an alias identifier, not a class.
+                    addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "targetActivity"),
+                            manifestPackage[0], compiledClassesDir, roots, manifestFile.getAbsolutePath());
+                }
+            }
+        } catch (XmlPullParserException | RuntimeException parseFailure) {
+            throw new IOException("Could not parse project AndroidManifest.xml for R8 component keep rules: "
+                    + manifestFile.getAbsolutePath() + ": " + parseFailure.getMessage(), parseFailure);
+        }
+    }
+
+    private void collectLayoutInflatedClasses(File directory, File compiledClassesDir,
+                                              String manifestPackage, Set<String> roots) throws IOException {
+        File[] entries = directory.listFiles();
+        if (entries == null) {
+            throw new IOException("Cannot read layout directory while generating R8 keep rules: "
+                    + directory.getAbsolutePath());
+        }
+        for (File entry : entries) {
+            if (entry.isDirectory()) {
+                collectLayoutInflatedClasses(entry, compiledClassesDir, manifestPackage, roots);
+            } else if (entry.isFile() && entry.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".xml")) {
+                collectOneLayoutInflatedClasses(entry, compiledClassesDir, manifestPackage, roots);
+            }
+        }
+    }
+
+    private void collectOneLayoutInflatedClasses(File layoutFile, File compiledClassesDir,
+                                                 String manifestPackage, Set<String> roots) throws IOException {
+        final String androidNamespace = "http://schemas.android.com/apk/res/android";
+        try (FileInputStream input = new FileInputStream(layoutFile)) {
+            XmlPullParser parser = Xml.newPullParser();
+            parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true);
+            parser.setInput(input, StandardCharsets.UTF_8.name());
+            int event;
+            while ((event = parser.next()) != XmlPullParser.END_DOCUMENT) {
+                if (event != XmlPullParser.START_TAG) continue;
+                String tag = parser.getName();
+                if (tag != null && tag.indexOf('.') > 0) {
+                    addCompiledApplicationRoot(tag, manifestPackage, compiledClassesDir, roots,
+                            layoutFile.getAbsolutePath());
+                }
+                // LayoutInflater's <view class="..."> and fragment android:name attributes are
+                // reflective entry points, so static call-graph analysis cannot discover them.
+                if ("view".equals(tag) || "fragment".equals(tag)
+                        || "androidx.fragment.app.FragmentContainerView".equals(tag)) {
+                    addCompiledApplicationRoot(parser.getAttributeValue(null, "class"), manifestPackage,
+                            compiledClassesDir, roots, layoutFile.getAbsolutePath());
+                    addCompiledApplicationRoot(parser.getAttributeValue(androidNamespace, "name"),
+                            manifestPackage, compiledClassesDir, roots, layoutFile.getAbsolutePath());
+                }
+            }
+        } catch (XmlPullParserException | RuntimeException parseFailure) {
+            throw new IOException("Could not parse layout XML while generating R8 custom-view keep rules: "
+                    + layoutFile.getAbsolutePath() + ": " + parseFailure.getMessage(), parseFailure);
+        }
+    }
+
+    private void addCompiledApplicationRoot(String rawName, String manifestPackage,
+                                            File compiledClassesDir, Set<String> roots,
+                                            String sourcePath) throws IOException {
+        if (rawName == null) return;
+        String candidate = rawName.trim();
+        if (candidate.isEmpty() || candidate.startsWith("${") || candidate.startsWith("@")) return;
+
+        String className;
+        if (candidate.startsWith(".")) {
+            className = manifestPackage + candidate;
+        } else if (candidate.indexOf('.') < 0) {
+            className = manifestPackage + "." + candidate;
+        } else {
+            className = candidate;
+        }
+
+        // Filter out resource references, placeholders, and malformed XML attribute values.
+        if (!className.matches("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*")) return;
+        File classFile = new File(compiledClassesDir,
+                className.replace('.', File.separatorChar) + ".class");
+        if (classFile.isFile()) {
+            roots.add(className);
+            return;
+        }
+
+        // A manifest/layout component in the app's own package is expected to have been compiled.
+        // Fail early rather than create an APK that silently lacks its declared entry point.
+        String appPackage = yq.packageName == null ? "" : yq.packageName.trim();
+        if (!appPackage.isEmpty()
+                && (className.equals(appPackage) || className.startsWith(appPackage + "."))) {
+            throw new IOException("R8 cannot preserve component '" + className + "' because its .class file is "
+                    + "missing from the Java compiler output. Reference source: " + sourcePath
+                    + ". Check whether the class compiled successfully and whether its package matches.");
+        }
+    }
+
+    private String getRJavaRules() throws IOException {
         StringBuilder sb = new StringBuilder("# R.java rules\n");
         for (Jp jp : builtInLibraryManager.getLibraries()) {
             if (jp.hasResources() && !jp.getPackageName().isEmpty()) {
@@ -881,19 +1113,33 @@ public class ProjectBuilder {
         }
         sb.append("-keep class ").append(yq.packageName).append(".R { *; }\n");
         sb.append("-keep class ").append(yq.packageName).append(".R$* { *; }\n");
-        return sb.toString();
-    }
-    
-    private boolean isR8ServiceRunning(Context context) {
-        android.app.ActivityManager manager = (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        if (manager != null) {
-            for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
-                if ("mod.pranav.build.R8Service".equals(service.service.getClassName())) {
-                    return true;
-                }
+
+        List<String> applicationRoots = getApplicationKeepClassesForCurrentBuild();
+        if (!applicationRoots.isEmpty()) {
+            sb.append("\n# Exact app component and XML-inflated class roots. Generated because this is a standalone R8 invocation.\n");
+            for (String className : applicationRoots) {
+                // Exact rules only: avoid broad package-wide keep rules that would disable shrinking
+                // for unrelated/unused project classes and dependencies.
+                sb.append("-keep class ").append(className).append(" { *; }\n");
             }
         }
-        return false;
+        return sb.toString();
+    }
+
+    private ArrayList<String> normalizeR8InputFiles(Collection<String> inputs, String role) throws IOException {
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (String rawPath : inputs) {
+            if (rawPath == null || rawPath.trim().isEmpty()) {
+                throw new IOException("R8 " + role + " input contains an empty file path.");
+            }
+            File input = new File(rawPath);
+            if (!input.isFile() || !input.canRead() || input.length() <= 0L) {
+                throw new IOException("R8 " + role + " input is missing, unreadable, or empty: "
+                        + input.getAbsolutePath());
+            }
+            unique.add(input.getCanonicalPath());
+        }
+        return new ArrayList<>(unique);
     }
 
     private boolean isR8ActiveForCurrentBuild() {
@@ -903,9 +1149,9 @@ public class ProjectBuilder {
     }
 
     /**
-     * Fall back to the existing ProGuard path only when R8 explicitly reports OOM.
-     * This preserves the user's R8 preference, removes any partial R8 dex output, and
-     * lets the normal D8/Dx stage consume ProGuard's output jar for this build only.
+     * Use the established ProGuard + D8/Dx path only after the isolated R8 service explicitly
+     * reports OutOfMemoryError. This fallback applies to this ProjectBuilder instance/build only;
+     * the user's saved R8 preference is not changed.
      */
     public void runProguardFallbackAfterR8OutOfMemory() throws IOException {
         useProguardFallbackForCurrentBuild = true;
@@ -929,7 +1175,27 @@ public class ProjectBuilder {
         runProguard();
     }
 
+    private boolean isR8ServiceRunning(Context context) {
+        android.app.ActivityManager manager = (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+        if (manager == null) return false;
+        try {
+            for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+                if (service.service != null && R8Service.class.getName().equals(service.service.getClassName())) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException e) {
+            LogUtil.w(TAG, "Could not query R8 service state: " + e.getMessage());
+        }
+        return false;
+    }
+
+    private JSONArray toJsonArray(Collection<String> values) {
+        return new JSONArray(values);
+    }
+
     public void runR8() throws IOException {
+        useProguardFallbackForCurrentBuild = false;
         long savedTimeMillis = System.currentTimeMillis();
 
         ArrayList<String> config = new ArrayList<>();
@@ -939,12 +1205,10 @@ public class ProjectBuilder {
         if (proguard.isKeepLineNumbersEnabled()) {
             config.add(ProguardHandler.LINE_NUMBER_RULES_PATH);
         }
-        var rules = new ArrayList<>(Arrays.asList(getRJavaRules().split("\n")));
+        ArrayList<String> rules = new ArrayList<>(Arrays.asList(getRJavaRules().split("\n")));
         for (Jp library : builtInLibraryManager.getLibraries()) {
             File f = BuiltInLibraries.getLibraryProguardConfiguration(library.getName());
-            if (f.exists()) {
-                config.add(f.getAbsolutePath());
-            }
+            if (f.exists()) config.add(f.getAbsolutePath());
         }
         config.addAll(mll.getPgRules());
 
@@ -952,45 +1216,48 @@ public class ProjectBuilder {
         ArrayList<String> libraryJars = new ArrayList<>();
 
         File compiledClassesDir = new File(yq.compiledClassesPath);
-        if (!compiledClassesDir.exists() || compiledClassesDir.list() == null || compiledClassesDir.list().length == 0) {
+        File[] compiledClassEntries = compiledClassesDir.listFiles();
+        if (!compiledClassesDir.isDirectory() || compiledClassEntries == null || compiledClassEntries.length == 0) {
             throw new IOException("Compiled classes directory is empty or does not exist. Compilation might have failed silently.");
         }
 
         try {
             JarBuilder.INSTANCE.generateJar(compiledClassesDir);
-            programJars.add(yq.compiledClassesPath + ".jar");
+            File classesJar = new File(yq.compiledClassesPath + ".jar");
+            if (!classesJar.isFile() || classesJar.length() == 0L) {
+                throw new IOException("Generated classes JAR is missing or empty.");
+            }
+            programJars.add(classesJar.getAbsolutePath());
         } catch (Exception e) {
             LogUtil.e(TAG, "Failed to build temp JAR for R8", e);
-            throw new IOException("Failed to package the project's own compiled classes for R8. " +
-                    "R8 cannot run without this input.", e);
+            throw new IOException("Failed to package the project's own compiled classes for R8. R8 cannot run without this input.", e);
         }
 
         for (Jp library : builtInLibraryManager.getLibraries()) {
             String classesJarPath = BuiltInLibraries.getLibraryClassesJarPathString(library.getName());
-            if (builtInLibraryManager.isDirectlyRequired(library.getName())) {
-                programJars.add(classesJarPath);
-            } else {
-                libraryJars.add(classesJarPath);
+            File classesJar = new File(classesJarPath);
+            if (!classesJar.isFile()) {
+                throw new IOException("Required built-in library JAR is missing: " + library.getName() + " (" + classesJarPath + ")");
             }
+            if (builtInLibraryManager.isDirectlyRequired(library.getName())) programJars.add(classesJarPath);
+            else libraryJars.add(classesJarPath);
         }
 
         if (settings.getMinSdkVersion() < 21) {
             programJars.add(BuiltInLibraries.getLibraryClassesJarPathString(BuiltInLibraries.ANDROIDX_MULTIDEX));
         }
 
-        if (!build_settings.getValue(BuildSettings.SETTING_NO_HTTP_LEGACY, ProjectSettings.SETTING_GENERIC_VALUE_FALSE).equals(ProjectSettings.SETTING_GENERIC_VALUE_TRUE)) {
+        if (!build_settings.getValue(BuildSettings.SETTING_NO_HTTP_LEGACY, ProjectSettings.SETTING_GENERIC_VALUE_FALSE)
+                .equals(ProjectSettings.SETTING_GENERIC_VALUE_TRUE)) {
             programJars.add(BuiltInLibraries.getLibraryClassesJarPathString(BuiltInLibraries.HTTP_LEGACY_ANDROID));
         }
 
         for (HashMap<String, Object> hashMap : mll.list) {
             if (hashMap.containsKey("jarPath")) {
-                String name = hashMap.get("name").toString();
-                String jarPath = hashMap.get("jarPath").toString();
-                if (proguard.libIsProguardFMEnabled(name) || !hashMap.containsKey("dexPath")) {
-                    programJars.add(jarPath);
-                } else {
-                    libraryJars.add(jarPath);
-                }
+                String name = String.valueOf(hashMap.get("name"));
+                String jarPath = String.valueOf(hashMap.get("jarPath"));
+                if (proguard.libIsProguardFMEnabled(name) || !hashMap.containsKey("dexPath")) programJars.add(jarPath);
+                else libraryJars.add(jarPath);
             }
         }
 
@@ -1001,108 +1268,152 @@ public class ProjectBuilder {
         }
 
         String extraCpPath = FileUtil.getExternalStorageDir() + "/.sketchware/data/" + yq.sc_id + "/files/classpath/";
-        for (String jar : FileUtil.listFiles(extraCpPath, "jar")) {
-            libraryJars.add(jar);
-        }
-
+        for (String jar : FileUtil.listFiles(extraCpPath, "jar")) libraryJars.add(jar);
         String customCp = build_settings.getValue(BuildSettings.SETTING_CLASSPATH, "");
-        if (!customCp.isEmpty()) {
-            libraryJars.addAll(Arrays.asList(customCp.split(":")));
+        if (!customCp.isEmpty()) libraryJars.addAll(Arrays.asList(customCp.split(":")));
+
+        // Canonicalize and de-duplicate inputs before crossing the service boundary. A path can
+        // be present in both project dependency collections (e.g. custom classpath + selected
+        // library); a program input must not also be presented to R8 as a library input.
+        programJars = normalizeR8InputFiles(programJars, "program");
+        libraryJars = normalizeR8InputFiles(libraryJars, "library");
+        Set<String> programPathSet = new java.util.HashSet<>(programJars);
+        int libraryOverlapCount = 0;
+        for (java.util.Iterator<String> iterator = libraryJars.iterator(); iterator.hasNext();) {
+            if (programPathSet.contains(iterator.next())) {
+                iterator.remove();
+                libraryOverlapCount++;
+            }
+        }
+        if (programJars.isEmpty()) {
+            throw new IOException("R8 has no program inputs after de-duplication; refusing to create an empty APK.");
+        }
+        if (libraryJars.isEmpty()) {
+            throw new IOException("R8 has no library classpath inputs after de-duplication.");
+        }
+        LogUtil.d(TAG, "R8 input plan: programJars=" + programJars.size()
+                + ", libraryJars=" + libraryJars.size()
+                + ", duplicate program/library paths removed=" + libraryOverlapCount
+                + ", expected app roots=" + getApplicationKeepClassesForCurrentBuild().size());
+
+        // Avoid Java native-serialization streams for an arguments file stored in shared storage.
+        // JSON keeps this protocol explicit, inspectable, and resilient across app updates.
+        File argsFile = new File(yq.binDirectoryPath, "r8_args.json");
+        File argsTempFile = new File(yq.binDirectoryPath, "r8_args.json.tmp");
+        JSONObject args = new JSONObject();
+        try {
+            args.put("rules", toJsonArray(rules));
+            args.put("config_files", toJsonArray(config));
+            args.put("library_inputs", toJsonArray(libraryJars));
+            args.put("program_inputs", toJsonArray(programJars));
+            args.put("expected_classes", toJsonArray(getApplicationKeepClassesForCurrentBuild()));
+            args.put("min_api", settings.getMinSdkVersion());
+            args.put("multi_dex", isMultiDexEnabled);
+            try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(argsTempFile), StandardCharsets.UTF_8)) {
+                writer.write(args.toString());
+                writer.flush();
+            }
+            try {
+                Files.move(argsTempFile.toPath(), argsFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                Files.move(argsTempFile.toPath(), argsFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (JSONException | IOException e) {
+            argsTempFile.delete();
+            throw new IOException("Failed to write R8 arguments: " + e.getMessage(), e);
         }
 
-        File argsFile = new File(yq.binDirectoryPath, "r8_args.obj");
-        try (java.io.ObjectOutputStream oos = new java.io.ObjectOutputStream(new java.io.FileOutputStream(argsFile))) {
-            oos.writeObject(rules);
-            oos.writeObject(config.toArray(new String[0]));
-            oos.writeObject(libraryJars.toArray(new String[0]));
-            oos.writeObject(programJars.toArray(new String[0]));
-            oos.writeInt(settings.getMinSdkVersion());
-            oos.writeBoolean(isMultiDexEnabled);
-        } catch (Exception e) {
-            throw new IOException("Failed to serialize R8 args: " + e.getMessage());
-        }
-
+        final String requestId = UUID.randomUUID().toString();
         final String[] error = new String[1];
-        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
-        final String requestId = java.util.UUID.randomUUID().toString();
+        final boolean[] success = new boolean[1];
+        final CountDownLatch latch = new CountDownLatch(1);
+        final long startedAt = SystemClock.elapsedRealtime();
+        final boolean[] receiverRegistered = new boolean[1];
 
         android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
             @Override
-            public void onReceive(Context context, Intent intent) {
-                if (intent == null || !requestId.equals(intent.getStringExtra("request_id"))) {
-                    return; // Ignore completions from another concurrent/retried build.
-                }
-                if (intent.hasExtra("error")) {
-                    error[0] = intent.getStringExtra("error");
+            public void onReceive(Context receiverContext, Intent intent) {
+                if (intent == null || !R8Service.ACTION_COMPLETE.equals(intent.getAction())) return;
+                String receivedId = intent.getStringExtra(R8Service.EXTRA_REQUEST_ID);
+                if (!requestId.equals(receivedId)) return; // Ignore stale/overlapping build broadcasts.
+                success[0] = intent.getBooleanExtra(R8Service.EXTRA_SUCCESS, false);
+                error[0] = intent.getStringExtra(R8Service.EXTRA_ERROR);
+                if (!success[0] && (error[0] == null || error[0].trim().isEmpty())) {
+                    error[0] = "R8 service returned an unsuccessful result without an error message.";
                 }
                 latch.countDown();
             }
         };
 
-        boolean receiverRegistered = false;
         try {
-            int flags = 0;
+            android.content.IntentFilter filter = new android.content.IntentFilter(R8Service.ACTION_COMPLETE);
             if (Build.VERSION.SDK_INT >= 33) {
-                flags = 4; // Context.RECEIVER_NOT_EXPORTED
-            }
-            if (Build.VERSION.SDK_INT >= 33) {
-                context.registerReceiver(receiver, new android.content.IntentFilter("com.sketchware.R8_COMPLETE"), flags);
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
             } else {
-                context.registerReceiver(receiver, new android.content.IntentFilter("com.sketchware.R8_COMPLETE"));
+                context.registerReceiver(receiver, filter);
             }
-            receiverRegistered = true;
+            receiverRegistered[0] = true;
 
-            Intent intent = new Intent();
-            intent.setClassName(context, "mod.pranav.build.R8Service");
-            intent.putExtra("sc_id", yq.sc_id);
-            intent.putExtra("args_path", argsFile.getAbsolutePath());
-            intent.putExtra("request_id", requestId);
-            context.startService(intent);
+            Intent intent = new Intent(context, R8Service.class);
+            intent.putExtra(R8Service.EXTRA_SC_ID, yq.sc_id);
+            intent.putExtra(R8Service.EXTRA_ARGS_PATH, argsFile.getAbsolutePath());
+            intent.putExtra(R8Service.EXTRA_REQUEST_ID, requestId);
+            try {
+                context.startForegroundService(intent);
+            } catch (RuntimeException startError) {
+                throw new IOException("Android could not start the R8 compiler service. Check that R8Service.java is included in the installed APK.", startError);
+            }
 
-            long serviceStartTime = android.os.SystemClock.elapsedRealtime();
-            final long startupGraceMs = 12000L;
-            final long compileTimeoutMs = 10L * 60L * 1000L;
-            while (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                long elapsed = android.os.SystemClock.elapsedRealtime() - serviceStartTime;
-                // Services can take a short time to become visible after startService(); don't
-                // mistake that launch race for an OOM/crash.
-                if (elapsed >= startupGraceMs && !isR8ServiceRunning(context)) {
-                    error[0] = "R8 compiler service stopped without sending a completion result. " +
-                            "The system may have terminated the isolated compiler process. Check device memory and logcat for R8Service.";
+            // Do not wait forever if the service process crashes or Android kills it.
+            final long timeoutMillis = TimeUnit.MINUTES.toMillis(20);
+            final long startupGraceMillis = TimeUnit.SECONDS.toMillis(15);
+            boolean finished = false;
+            while (!finished) {
+                long elapsed = SystemClock.elapsedRealtime() - startedAt;
+                long remaining = timeoutMillis - elapsed;
+                if (remaining <= 0L) {
+                    error[0] = "R8 compilation timed out after 20 minutes. Check device memory and the build log; no successful R8 result was reported.";
                     break;
                 }
-                // Do not wait forever if a compiler gets stuck. This is deliberately generous
-                // for large projects, and the isolated service is stopped before returning.
-                if (elapsed >= compileTimeoutMs) {
-                    error[0] = "R8 did not finish within 10 minutes. The compiler service was asked to stop to avoid an indefinite build hang. " +
-                            "Try disabling R8 or reducing enabled libraries if the project is unusually large.";
-                    Intent stopIntent = new Intent();
-                    stopIntent.setClassName(context, "mod.pranav.build.R8Service");
-                    context.stopService(stopIntent);
+                finished = latch.await(Math.min(TimeUnit.SECONDS.toMillis(2), remaining), TimeUnit.MILLISECONDS);
+                if (!finished && elapsed >= startupGraceMillis && !isR8ServiceRunning(context)) {
+                    error[0] = "R8 compiler service exited without reporting a result. Verify the installed APK contains " + R8Service.class.getName() + " and inspect the R8 service log.";
                     break;
                 }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("R8 compilation was interrupted.", e);
-        } catch (RuntimeException e) {
-            throw new IOException("Unable to start the isolated R8 compiler service: " + e.getMessage(), e);
+            throw new IOException("R8 compilation wait was interrupted.", e);
         } finally {
-            if (receiverRegistered) {
-                try {
-                    context.unregisterReceiver(receiver);
-                } catch (IllegalArgumentException ignored) {
-                    // The receiver may already have been detached by the framework.
-                }
+            if (receiverRegistered[0]) {
+                try { context.unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) { }
             }
-            if (argsFile.exists() && !argsFile.delete()) {
-                LogUtil.d(TAG, "Could not remove temporary R8 arguments file: " + argsFile.getAbsolutePath());
-            }
+            argsTempFile.delete();
         }
 
-        if (error[0] != null) {
-            broadcastBuildOutput(error[0]); 
-            throw new IOException("R8 Compilation Failed:\n" + error[0]);
+        if (error[0] != null || !success[0]) {
+            String message = error[0] == null ? "R8 did not report a successful result." : error[0];
+            String normalizedMessage = message.toLowerCase(java.util.Locale.ROOT);
+            boolean explicitOutOfMemory = normalizedMessage.contains("r8 ran out of memory")
+                    || normalizedMessage.contains("outofmemoryerror")
+                    || normalizedMessage.contains("out of memory in the compiler process");
+            if (explicitOutOfMemory) {
+                broadcastBuildOutput("R8 reported an out-of-memory failure. Retrying this build with the existing ProGuard + D8/Dx path; your R8 setting will remain enabled for future builds.");
+                if (progressReceiver != null) {
+                    progressReceiver.onProgress("R8 memory limit reached; retrying with ProGuard...", 16);
+                }
+                try {
+                    runProguardFallbackAfterR8OutOfMemory();
+                    LogUtil.w(TAG, "R8 explicitly reported OOM; ProGuard fallback completed for this build.");
+                    return;
+                } catch (IOException fallbackFailure) {
+                    fallbackFailure.addSuppressed(new IOException("Original R8 failure: " + message));
+                    broadcastBuildOutput("R8 OOM fallback also failed: " + fallbackFailure.getMessage());
+                    throw fallbackFailure;
+                }
+            }
+            broadcastBuildOutput("R8 Compilation Failed:\n" + message);
+            throw new IOException("R8 Compilation Failed:\n" + message);
         }
 
         LogUtil.d(TAG, "R8 took " + (System.currentTimeMillis() - savedTimeMillis) + " ms");

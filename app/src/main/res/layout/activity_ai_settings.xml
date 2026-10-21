@@ -144,6 +144,15 @@
                             android:layout_weight="1"
                             android:text="Test AI" />
                     </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/buttonAgentWorkspace"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="Agent Workspace · Background tasks"
+                        app:icon="@drawable/ic_mtrl_ai" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
