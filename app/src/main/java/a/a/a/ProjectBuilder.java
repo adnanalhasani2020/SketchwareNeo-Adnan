@@ -281,9 +281,9 @@ public class ProjectBuilder {
     public void createDexFilesFromClasses() throws Exception {
         File dexOutputDir = new File(yq.binDirectoryPath, "dex");
 
-        // runR8() has already written the final DEX files into this directory. Do not run the
-        // ordinary D8/Dx cleanup on the R8 path: deleting classes*.dex here caused successful
-        // R8 runs to leave only META-INF entries, so the APK silently lost the app's classes.
+        // CRITICAL: ProguardHandler.start() runs R8 BEFORE this method. The old implementation
+        // deleted every .dex file and only then returned for R8, leaving bin/dex/META-INF but no
+        // bytecode. Never run D8/Dx cleanup on a successful R8 path.
         if (isR8ActiveForCurrentBuild()) {
             File[] r8DexFiles = dexOutputDir.listFiles(
                     (dir, name) -> name.matches("classes([0-9]+)?\\.dex"));
@@ -292,10 +292,9 @@ public class ProjectBuilder {
                         + dexOutputDir.getAbsolutePath() + ". The build is stopped instead of packaging an APK without application bytecode.");
             }
             for (File dexFile : r8DexFiles) {
-                if (!dexFile.isFile() || dexFile.length() == 0L) {
-                    throw new IOException("R8 produced an empty or invalid DEX output: " + dexFile.getAbsolutePath());
-                }
+                validateDexOutputFile(dexFile, "R8");
             }
+            LogUtil.d(TAG, "Preserving R8 outputs: " + Arrays.toString(r8DexFiles));
             return;
         }
 
@@ -348,6 +347,35 @@ public class ProjectBuilder {
             } catch (Exception e) {
                 LogUtil.e(TAG, "Dx failed to process .class files", e);
                 throw e;
+            }
+        }
+    }
+
+    /** classes.dex sorts before classes2.dex, classes3.dex, and so on. */
+    private int getDexOutputSequence(String fileName) {
+        if ("classes.dex".equals(fileName)) return 1;
+        if (fileName != null && fileName.matches("classes[0-9]+\\.dex")) {
+            try {
+                int sequence = Integer.parseInt(fileName.substring("classes".length(), fileName.length() - ".dex".length()));
+                return sequence >= 2 ? sequence : Integer.MAX_VALUE;
+            } catch (NumberFormatException ignored) {
+                return Integer.MAX_VALUE;
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    /** Validates the DEX header before its path is allowed into APK packaging. */
+    private void validateDexOutputFile(File dexFile, String compilerName) throws IOException {
+        if (dexFile == null || !dexFile.isFile() || dexFile.length() < 112L) {
+            throw new IOException(compilerName + " produced a missing, empty, or truncated DEX file: "
+                    + (dexFile == null ? "<null>" : dexFile.getAbsolutePath()));
+        }
+        try (RandomAccessFile input = new RandomAccessFile(dexFile, "r")) {
+            byte[] magic = new byte[8];
+            input.readFully(magic);
+            if (magic[0] != 'd' || magic[1] != 'e' || magic[2] != 'x' || magic[3] != '\n' || magic[7] != 0) {
+                throw new IOException(compilerName + " output is not a valid DEX file: " + dexFile.getAbsolutePath());
             }
         }
     }
@@ -803,11 +831,37 @@ public class ProjectBuilder {
             }
         }
 
-        for (String file : FileUtil.listFiles(yq.binDirectoryPath + File.separator + "dex", "dex")) {
-            dexes.add(new File(file));
+        // Application/R8 DEX files must be first. The old order put pre-dexed transitive
+        // libraries first; on debug builds with minSdk >= 21 buildApk() uses the first list item
+        // as APK classes.dex, so the app's MainActivity could be relegated to classes2.dex.
+        File applicationDexDirectory = new File(yq.binDirectoryPath, "dex");
+        ArrayList<File> applicationDexFiles = new ArrayList<>();
+        File[] applicationDexEntries = applicationDexDirectory.listFiles(
+                (dir, name) -> name.matches("classes([0-9]+)?\\.dex"));
+        if (applicationDexEntries != null) {
+            for (File dexFile : applicationDexEntries) {
+                if (dexFile.isFile() && dexFile.length() > 0L) {
+                    applicationDexFiles.add(dexFile);
+                }
+            }
         }
+        applicationDexFiles.sort((left, right) -> Integer.compare(
+                getDexOutputSequence(left.getName()), getDexOutputSequence(right.getName())));
 
-        LogUtil.d(TAG, "Will merge these " + dexes.size() + " DEX files to classes.dex: " + dexes);
+        if (isR8Running && applicationDexFiles.isEmpty()) {
+            throw new IOException("R8 DEX output disappeared before APK assembly. Expected classes.dex under "
+                    + applicationDexDirectory.getAbsolutePath() + "; refusing to package an APK without app classes.");
+        }
+        if (!isR8Running && applicationDexFiles.isEmpty()) {
+            throw new IOException("D8/Dx produced no classes*.dex files under "
+                    + applicationDexDirectory.getAbsolutePath() + ". Refusing to package an APK without application bytecode.");
+        }
+        for (File applicationDexFile : applicationDexFiles) {
+            validateDexOutputFile(applicationDexFile, isR8Running ? "R8" : (isD8Enabled() ? "D8" : "Dx"));
+        }
+        dexes.addAll(0, applicationDexFiles);
+
+        LogUtil.d(TAG, "DEX assembly order (application output first): " + dexes);
 
         if (settings.getMinSdkVersion() < 21 || !yq.N.isDebugBuild) {
             dexLibraries(new File(yq.binDirectoryPath), dexes);
