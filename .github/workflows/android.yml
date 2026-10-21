@@ -1,3 +1,4 @@
+# Manual APK export trigger: rebuild requested by repository owner.
 name: Android CI
 
 on:
@@ -54,8 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: 17
           distribution: temurin
@@ -150,8 +150,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
