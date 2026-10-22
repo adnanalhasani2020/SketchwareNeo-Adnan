@@ -380,6 +380,11 @@ public class ProjectBuilder {
         KotlinCompilerBridge.maybeAddKotlinFilesToClasspath(classpath, yq);
         classpath.append(androidJarPath);
 
+        // Generated SketchApplication.java uses androidx.annotation.NonNull/Nullable
+        // even when the project has no AndroidX library selected. Keep annotation
+        // available to the Eclipse Java compiler for every project build.
+        classpath.append(":").append(BuiltInLibraries.getLibraryClassesJarPathString(BuiltInLibraries.ANDROIDX_ANNOTATION_JVM));
+
         if (!build_settings.getValue(BuildSettings.SETTING_NO_HTTP_LEGACY,
                 BuildSettings.SETTING_GENERIC_VALUE_FALSE).equals(BuildSettings.SETTING_GENERIC_VALUE_TRUE)) {
             classpath.append(":").append(BuiltInLibraries.getLibraryClassesJarPathString(BuiltInLibraries.HTTP_LEGACY_ANDROID));
