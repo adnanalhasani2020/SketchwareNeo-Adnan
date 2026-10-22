@@ -621,7 +621,12 @@ public class ProjectBuilder {
                 args.add("-deprecation");
             }
             args.add("-d"); args.add(yq.compiledClassesPath);
-            args.add("-cp"); args.add(getClasspath());
+            // SketchApplication.java template imports these annotations even when the
+            // project has not selected an AndroidX library. Keep this dependency scoped
+            // to ECJ Java compilation rather than changing the shared classpath for D8/R8.
+            args.add("-cp");
+            args.add(getClasspath() + ":" + BuiltInLibraries.getLibraryClassesJarPathString(
+                    BuiltInLibraries.ANDROIDX_ANNOTATION_JVM));
             args.add("-proc:none"); args.add(yq.javaFilesPath); args.add(yq.rJavaDirectoryPath);
             
             String pathJava = fpu.getPathJava(yq.sc_id);
